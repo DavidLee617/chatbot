@@ -8,7 +8,7 @@
 
 - **一律用中文回答**，包括总结和进度说明。代码标识符、命令、文件名保持原样。
 - 用户有 C# / .NET 背景。代码注释里的「C# 对照」/「≈ …」是给用户看的，新写的代码保持这个风格。
-- 需求来源是设计文档《PsyQA · 心理学经典问答机器人 设计文档 v1.0》（`design for chatbot.md`）。**它目前不在仓库里**，是用户在对话里贴的；需要时让用户提供，或请用户决定是否把它放进仓库。按里程碑实现，不加设计没要求的功能；文档与实际环境冲突时先提出来。
+- `docs/DESIGN.md` 是需求来源（设计文档 v1.0 原文）：按里程碑实现，不加设计没要求的功能；文档与实际环境冲突时先提出来。和它不一致的实现决定记在本文件第 4 节。
 - **密钥**：`DASHSCOPE_API_KEY` 只从环境变量读，`application.yml` 里没有任何密钥。不要打印、不要写进文件。
 - **本机有 HTTP 代理**（`HTTP_PROXY` 等环境变量）。curl 访问 localhost / Milvus 必须加 `--noproxy '*'`，否则拿到 502 或空响应。Java 不读这些环境变量，直连。
 - **zsh 不对变量做分词**：`for p in "a 1"; do set -- $p` 和 `C="curl -s"; $C ...` 都会出错（今天踩了两次），写 shell 时用函数或数组。
@@ -21,7 +21,7 @@
 
 | 顺序 | 文件 | 看什么 |
 |---|---|---|
-| 1 | 设计文档（见第 0 节） | 范围、护栏、SSE 协议、里程碑（第 12 节）、第二阶段（第 13 节） |
+| 1 | `docs/DESIGN.md` | 范围、护栏、SSE 协议、里程碑（第 12 节）、第二阶段（第 13 节） |
 | 2 | `src/main/resources/application.yml` | 模型 ID、关 thinking 的 `extra-body`、Milvus 配置、`psyqa.*` 参数 |
 | 3 | `src/main/java/com/lee/psyqa/answer/AnswerService.java` | 问答主流程，从这里往下读最快 |
 | 4 | `src/main/java/com/lee/psyqa/ingest/` | 清洗 → 分章 → 切块 → 写入 |
