@@ -1,0 +1,7 @@
+[
+  {"file": "jung-collected-papers.txt",       "title": "Collected Papers on Analytical Psychology", "author": "C. G. Jung",     "sourceUrl": "https://www.gutenberg.org/ebooks/48225"},
+  {"file": "jung-psychology-unconscious.txt", "title": "Psychology of the Unconscious",             "author": "C. G. Jung",     "sourceUrl": "https://www.gutenberg.org/ebooks/65903"},
+  {"file": "jung-theory-psychoanalysis.txt",  "title": "The Theory of Psychoanalysis",              "author": "C. G. Jung",     "sourceUrl": "https://www.gutenberg.org/ebooks/66041"},
+  {"file": "freud-general-intro.txt",         "title": "A General Introduction to Psychoanalysis",  "author": "Sigmund Freud",  "sourceUrl": "https://www.gutenberg.org/ebooks/38219"},
+  {"file": "freud-interpretation-dreams.txt", "title": "The Interpretation of Dreams",              "author": "Sigmund Freud",  "sourceUrl": "https://www.gutenberg.org/ebooks/66048"}
+]

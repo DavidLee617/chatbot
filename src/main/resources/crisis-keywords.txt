@@ -1,0 +1,37 @@
+# 危机关键词（包含匹配，不区分大小写）。一行一个，# 开头为注释。
+# 宁可多报：误报只是多显示一次求助信息，漏报代价高得多。
+
+# 中文
+自杀
+自殺
+不想活
+活不下去
+活着没意思
+活着没有意义
+结束生命
+结束自己
+了结自己
+轻生
+寻死
+想死
+去死
+割腕
+跳楼
+上吊
+吃安眠药
+伤害自己
+自残
+自伤
+
+# English
+suicide
+suicidal
+kill myself
+killing myself
+end my life
+want to die
+wanna die
+self-harm
+self harm
+hurt myself
+cut myself

@@ -1,0 +1,62 @@
+# C# 对照：application.yml ≈ appsettings.json；${ENV} 从环境变量读取
+# 密钥只从环境变量读，不要在本文件里写真实值。
+
+spring:
+  application:
+    name: psyqa
+  main:
+    banner-mode: off
+  ai:
+    openai:
+      api-key: ${DASHSCOPE_API_KEY}
+      # Spring AI 会自动拼接 /v1/chat/completions 和 /v1/embeddings，所以这里不要带 /v1
+      base-url: https://dashscope.aliyuncs.com/compatible-mode
+      chat:
+        options:
+          model: deepseek-v4.1-flash     # 2026-10-04 已用 /v1/models 核对
+          temperature: 0.3
+          stream-usage: true             # 流式调用时最后一个响应带 token 用量
+          # deepseek-v4.1-flash 默认开启 thinking，关掉省延迟和 token
+          extra-body:
+            enable_thinking: false
+      embedding:
+        options:
+          model: text-embedding-v4
+          dimensions: 1024
+    vectorstore:
+      milvus:
+        client:
+          host: localhost
+          port: 19530
+        database-name: default
+        collection-name: psyqa_chunks
+        embedding-dimension: 1024
+        index-type: HNSW
+        metric-type: COSINE
+        initialize-schema: true
+    retry:
+      max-attempts: 1                # ingest 有自己的批次重试，避免两层重试叠加
+    model:
+      # 只用 chat + embedding，关闭 OpenAI starter 顺带装配的其他模型
+      image: none
+      audio:
+        speech: none
+        transcription: none
+      moderation: none
+
+server:
+  port: 8080
+
+psyqa:
+  retrieval:
+    top-k: 5
+    similarity-threshold: 0.45     # 初始值，按日志里的分数分布再调
+  ingest:
+    books-dir: data/raw
+    chunk-size-chars: 2000
+    chunk-overlap-chars: 200
+    embed-batch-size: 10           # text-embedding-v4 单次最多 10 条，超过会报错
+  crisis:
+    keywords-file: classpath:crisis-keywords.txt
+    # 上线前再核对一次号码
+    hotline-text: "全国心理援助热线 12356；遇到紧急危险请拨打 120 / 110"

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PsyQA · 心理学经典问答</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #f7f6f3; --surface: #ffffff; --text: #1f1d1a; --muted: #6b665e; --border: #e3e0d9;
+    --accent: #5b4bb7; --accent-text: #ffffff; --user-bg: #ece9ff;
+    --crisis-bg: #fff1ec; --crisis-border: #e0623b; --refused-bg: #f1f0ec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17161a; --surface: #211f25; --text: #ecebef; --muted: #a29fa8; --border: #34313a;
+      --accent: #9d8fff; --accent-text: #17161a; --user-bg: #2c2840;
+      --crisis-bg: #3a221b; --crisis-border: #ff8a65; --refused-bg: #26252a;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif; }
+  .wrap { max-width: 760px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 0 16px; }
+  header { padding: 20px 0 8px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  #messages { flex: 1; padding: 12px 0 120px; }
+  .msg { margin: 14px 0; }
+  .user { margin-left: auto; max-width: 85%; width: fit-content; background: var(--user-bg); padding: 10px 14px; border-radius: 14px 14px 4px 14px; white-space: pre-wrap; }
+  .bot { background: var(--surface); border: 1px solid var(--border); padding: 12px 16px; border-radius: 14px; }
+  .bot.crisis { background: var(--crisis-bg); border: 2px solid var(--crisis-border); }
+  .bot.refused { background: var(--refused-bg); color: var(--muted); }
+  .answer > :first-child { margin-top: 0; } .answer > :last-child { margin-bottom: 0; }
+  .answer p { margin: .6em 0; }
+  .answer:empty::after { content: "思考中…"; color: var(--muted); }
+  details.sources { margin-bottom: 10px; border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px; font-size: 14px; }
+  details.sources summary { cursor: pointer; color: var(--muted); }
+  .src { padding: 8px 0; border-top: 1px dashed var(--border); }
+  .src:first-of-type { border-top: 0; }
+  .src .meta { font-weight: 600; }
+  .src .score { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .src .snippet { color: var(--muted); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+  .error { color: var(--crisis-border); }
+  form { position: fixed; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, var(--bg) 30%); padding: 20px 0 16px; }
+  form .row { max-width: 760px; margin: 0 auto; padding: 0 16px; display: flex; gap: 8px; }
+  textarea { flex: 1; resize: none; min-width: 0; font: inherit; color: var(--text); background: var(--surface);
+             border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; height: 46px; max-height: 160px; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button { font: inherit; border: 0; border-radius: 12px; padding: 0 18px; background: var(--accent); color: var(--accent-text); cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>PsyQA · 心理学经典问答</h1>
+    <p>基于荣格、弗洛伊德的公版英文著作回答，并标注出处。仅作理论讨论，不提供心理咨询。</p>
+  </header>
+  <div id="messages"></div>
+</div>
+<form id="form">
+  <div class="row">
+    <textarea id="q" placeholder="例如：荣格说的集体无意识是什么？" maxlength="500" required></textarea>
+    <button id="send" type="submit">发送</button>
+  </div>
+</form>
+
+<script>
+  const $messages = document.getElementById('messages');
+  const $form = document.getElementById('form');
+  const $q = document.getElementById('q');
+  const $send = document.getElementById('send');
+
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = text;
+    return e;
+  }
+
+  function renderSources(container, sources) {
+    const d = el('details', 'sources');
+    d.appendChild(el('summary', null, `参考来源（${sources.length}）`));
+    for (const s of sources) {
+      const item = el('div', 'src');
+      const meta = el('div', 'meta', `[${s.index}] 《${s.book}》${s.author} · ${s.chapter}`);
+      meta.appendChild(el('span', 'score', `相似度 ${s.score.toFixed(2)}`));
+      item.appendChild(meta);
+      item.appendChild(el('div', 'snippet', s.snippet.slice(0, 200)));
+      d.appendChild(item);
+    }
+    container.prepend(d);
+  }
+
+  function ask(question) {
+    $messages.appendChild(el('div', 'msg user', question));
+    const bot = el('div', 'msg bot');
+    const answer = el('div', 'answer');
+    bot.appendChild(answer);
+    $messages.appendChild(bot);
+    bot.scrollIntoView({ block: 'end' });
+
+    let text = '';
+    $send.disabled = true;
+    const es = new EventSource('/api/chat?q=' + encodeURIComponent(question));
+    const finish = () => { es.close(); $send.disabled = false; $q.focus(); };
+
+    es.addEventListener('route', e => {
+      const route = JSON.parse(e.data);
+      if (route === 'CRISIS') bot.classList.add('crisis');
+      if (route === 'REFUSED') bot.classList.add('refused');
+    });
+    es.addEventListener('sources', e => renderSources(bot, JSON.parse(e.data)));
+    es.addEventListener('token', e => {
+      text += JSON.parse(e.data);
+      // 模型输出来自外部，渲染前去掉原始 HTML，只保留 Markdown 结构
+      answer.innerHTML = marked.parse(text.replace(/</g, '&lt;'));
+      window.scrollTo(0, document.body.scrollHeight);
+    });
+    es.addEventListener('error', e => {
+      // 服务端主动发的 error 事件带 data；连接断开时浏览器触发的 error 没有 data
+      const msg = e.data ? JSON.parse(e.data) : (text ? null : '连接中断，请重试。');
+      if (msg) answer.appendChild(el('p', 'error', msg));
+      finish();
+    });
+    es.addEventListener('done', finish);
+  }
+
+  $form.addEventListener('submit', e => {
+    e.preventDefault();
+    const q = $q.value.trim();
+    if (!q || $send.disabled) return;
+    $q.value = '';
+    ask(q);
+  });
+  $q.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); $form.requestSubmit(); }
+  });
+</script>
+</body>
+</html>
