@@ -80,6 +80,11 @@ public class RetrievalService {
         return retrieve(question, history, props.topK(), props.queryMode(), props.rerank().enabled());
     }
 
+    /** @param memoryTopics 召回到的以前聊过的主题（T9），新对话里用来解析指代 */
+    public Result retrieve(String question, List<Turn> history, List<String> memoryTopics) {
+        return retrieve(question, history, memoryTopics, props.topK(), props.queryMode(), props.rerank().enabled());
+    }
+
     public Result retrieve(String question, int k, QueryMode mode) {
         return retrieve(question, List.of(), k, mode, props.rerank().enabled());
     }
@@ -89,7 +94,18 @@ public class RetrievalService {
      * @param rerank  是否 rerank（评估时可以覆盖配置）
      */
     public Result retrieve(String question, List<Turn> history, int k, QueryMode mode, boolean rerank) {
-        QueryTranslator.Translation t = mode == QueryMode.ORIGINAL ? null : translateOrNull(question, history);
+        return retrieve(question, history, List.of(), k, mode, rerank);
+    }
+
+    /**
+     * 指代有歧义（{@link QueryTranslator.Resolution#AMBIGUOUS}）时不检索、返回空结果：由 AnswerService 反问用户，
+     * 拿一个猜出来的问题去检索只会把回答带偏。
+     */
+    public Result retrieve(String question, List<Turn> history, List<String> memoryTopics, int k, QueryMode mode, boolean rerank) {
+        QueryTranslator.Translation t = mode == QueryMode.ORIGINAL ? null : translateOrNull(question, history, memoryTopics);
+        if (t != null && t.resolution() == QueryTranslator.Resolution.AMBIGUOUS) {
+            return new Result(List.of(), List.of(), List.of(), mode, t, null);
+        }
         int n = rerank ? Math.max(k, props.rerank().candidates()) : k;
         List<Document> hits;
         if (t == null) {
@@ -129,9 +145,9 @@ public class RetrievalService {
         return props.rerank().enabled();
     }
 
-    private QueryTranslator.Translation translateOrNull(String question, List<Turn> history) {
+    private QueryTranslator.Translation translateOrNull(String question, List<Turn> history, List<String> memoryTopics) {
         try {
-            Optional<QueryTranslator.Translation> t = translator.translate(question, history);
+            Optional<QueryTranslator.Translation> t = translator.translate(question, history, memoryTopics);
             return t.orElse(null);
         } catch (RuntimeException e) {
             log.warn("查询翻译失败，退回原问题检索：{}", e.getMessage());

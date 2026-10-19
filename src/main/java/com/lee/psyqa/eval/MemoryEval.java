@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lee.psyqa.conversation.Turn;
 import com.lee.psyqa.memory.Memory;
 import com.lee.psyqa.memory.MemoryService;
+import com.lee.psyqa.retrieval.QueryTranslator;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -30,12 +31,21 @@ import java.util.Locale;
  * </ul>
  * 再跑探针问题：recall 列出期望召回的主题（每组关键词任一命中一条召回的 topic），空列表表示不应召回任何主题。
  * 结束后删掉临时用户的记忆（最终记忆写进结果文件）。只评记忆，不检索、不生成。
+ * <p>
+ * references（T9，eval/memory-reference.jsonl）：新对话的第一句带指代。先召回记忆主题，再走线上同一个改写方法，
+ * 检查判断（RESOLVED / AMBIGUOUS / NONE）对不对；RESOLVED 时英文问题里要出现期望的词（any 任一）。
  */
 @Service
 public class MemoryEval {
 
     @JsonIgnoreProperties(ignoreUnknown = true)
-    public record Scenario(String id, String note, List<Session> sessions, Expect expect, List<Probe> probes) {}
+    public record Scenario(String id, String note, List<Session> sessions, Expect expect, List<Probe> probes,
+                           List<Reference> references) {}
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public record Reference(String question, String expect, List<String> any) {}
+
+    public record ReferenceResult(String question, String expect, String got, String text, List<String> topics, boolean ok) {}
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Session(List<Turn> turns) {}
@@ -58,16 +68,18 @@ public class MemoryEval {
 
     public record ScenarioResult(String id, String note, List<String> memories,
                                  int expectedFacts, int foundFacts, List<String> forbidHits, List<String> absentHits,
-                                 boolean noFactsViolated, List<ProbeResult> probes,
+                                 boolean noFactsViolated, List<ProbeResult> probes, List<ReferenceResult> references,
                                  int extractCalls, int reconcileCalls, int tokens, long writeMs) {}
 
     public record Outcome(String summary, Path markdownFile) {}
 
     private final MemoryService memory;
+    private final QueryTranslator translator;
     private final ObjectMapper objectMapper;
 
-    public MemoryEval(MemoryService memory, ObjectMapper objectMapper) {
+    public MemoryEval(MemoryService memory, QueryTranslator translator, ObjectMapper objectMapper) {
         this.memory = memory;
+        this.translator = translator;
         this.objectMapper = objectMapper;
     }
 
@@ -98,7 +110,16 @@ public class MemoryEval {
         List<ProbeResult> positive = probes.stream().filter(p -> !p.expectNone()).toList();
         List<ProbeResult> negative = probes.stream().filter(ProbeResult::expectNone).toList();
         int extracts = results.stream().mapToInt(ScenarioResult::extractCalls).sum();
-        String summary = """
+        List<ReferenceResult> refs = results.stream().flatMap(r -> r.references().stream()).toList();
+        StringBuilder refLine = new StringBuilder();
+        for (String kind : List.of("RESOLVED", "AMBIGUOUS", "NONE")) {
+            List<ReferenceResult> k = refs.stream().filter(r -> r.expect().equals(kind)).toList();
+            if (!k.isEmpty()) {
+                refLine.append(refLine.isEmpty() ? "" : "，").append("期望 ").append(kind).append(' ')
+                        .append(k.stream().filter(ReferenceResult::ok).count()).append('/').append(k.size());
+            }
+        }
+        String summary = (refs.isEmpty() ? "" : "新对话指代：" + refLine + "\n") + """
                 应记住的偏好 / 背景 %d 条：记到 %d
                 不该记的内容（情绪 / 健康 / 人际 / 安全）：%d 个剧本违规 %s
                 更新 / 更正后旧内容残留：%d 个剧本 %s
@@ -142,7 +163,7 @@ public class MemoryEval {
         }
         List<Memory> mems = memory.list(userId);
         List<Memory> facts = mems.stream().filter(m -> m.kind().isFact()).toList();
-        Expect ex = sc.expect();
+        Expect ex = sc.expect() == null ? new Expect(List.of(), List.of(), List.of(), null) : sc.expect();
 
         int foundFacts = 0;
         for (ExpectedFact f : nullToEmpty(ex.facts())) {
@@ -166,9 +187,26 @@ public class MemoryEval {
             probes.add(new ProbeResult(p.question(), groups.isEmpty(), groups.size(), hit, recalled, r.topicScores(),
                     memory.topicScores(userId, p.question())));
         }
+        List<ReferenceResult> refs = new ArrayList<>();
+        for (Reference ref : nullToEmpty(sc.references())) {
+            List<String> topics = memory.recall(userId, ref.question()).recentTopics().stream().map(Memory::content).toList();
+            String got;
+            String text;
+            try {
+                var t = translator.translate(ref.question(), List.of(), topics);
+                got = t.map(x -> x.resolution().name()).orElse("NONE");
+                text = t.map(QueryTranslator.Translation::text).orElse(ref.question());
+            } catch (RuntimeException e) {
+                got = "ERROR";
+                text = e.getMessage();
+            }
+            boolean ok = got.equals(ref.expect())
+                    && (!got.equals("RESOLVED") || containsAny(text, nullToEmpty(ref.any())));
+            refs.add(new ReferenceResult(ref.question(), ref.expect(), got, text, topics, ok));
+        }
         return new ScenarioResult(sc.id(), sc.note(),
                 mems.stream().map(m -> m.kind() + " " + m.content()).toList(),
-                nullToEmpty(ex.facts()).size(), foundFacts, forbidHits, absentHits, noFactsViolated, probes,
+                nullToEmpty(ex.facts()).size(), foundFacts, forbidHits, absentHits, noFactsViolated, probes, refs,
                 extracts, reconciles, tokens, writeMs);
     }
 
@@ -197,6 +235,11 @@ public class MemoryEval {
                 sb.append("\n探针「").append(p.question()).append("」→ 召回 ").append(p.recalled())
                         .append(" 分数 ").append(fmt(p.recalledScores())).append("；全部主题分数 ").append(fmt(p.allTopicScores()))
                         .append(p.ok() ? " ✅" : " ❌").append('\n');
+            }
+            for (ReferenceResult rr : r.references()) {
+                sb.append("\n指代「").append(rr.question()).append("」主题 ").append(rr.topics()).append(" → ").append(rr.got())
+                        .append("：").append(rr.text()).append("（期望 ").append(rr.expect()).append("）")
+                        .append(rr.ok() ? " ✅" : " ❌").append('\n');
             }
             sb.append('\n').append(problems.isEmpty() ? "✅ 记忆检查通过" : "❌ " + String.join("；", problems)).append('\n');
         }

@@ -106,6 +106,17 @@ class MemoryServiceTest {
     }
 
     @Test
+    void safetyRelatedExtractionIsDroppedInCode() {
+        when(extractor.extract(anyList(), any())).thenReturn(new MemoryExtractor.Extraction(
+                List.of(new MemoryExtractor.Fact(Memory.Kind.PREFERENCE, "用户不希望回答中出现热线号码")),
+                List.of("弗洛伊德对自杀的解释"), 50));
+        var r = service.write("u", List.of(), turn);
+        assertThat(r.added()).isZero();
+        verify(repo, never()).insert(any());
+        verify(em, never()).embed(anyList());
+    }
+
+    @Test
     void recallReturnsAllFactsAndOnlyRelatedTopics() {
         when(repo.findByUser("u")).thenReturn(List.of(
                 mem(Memory.Kind.PREFERENCE, "用户希望回答简短 B"),
@@ -115,6 +126,8 @@ class MemoryServiceTest {
         assertThat(r.facts()).extracting(Memory::content).containsExactly("用户希望回答简短 B");
         assertThat(r.topics()).extracting(Memory::content).containsExactly("荣格的阴影 A");
         assertThat(r.render()).isEqualTo("- 用户希望回答简短 B\n- 以前聊过：荣格的阴影 A");
+        // 解析指代的候选按时间、不按相似度：两个主题都在
+        assertThat(r.recentTopics()).hasSize(2);
     }
 
     @Test

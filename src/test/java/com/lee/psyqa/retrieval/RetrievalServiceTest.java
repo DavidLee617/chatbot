@@ -55,6 +55,20 @@ class RetrievalServiceTest {
     }
 
     @Test
+    void memoryResolutionParsingAndReferenceGate() {
+        assertThat(QueryTranslator.parseResolution("RESOLVED: How does the persona relate to the shadow?"))
+                .isEqualTo(new QueryTranslator.Parsed(QueryTranslator.Resolution.RESOLVED, "How does the persona relate to the shadow?"));
+        assertThat(QueryTranslator.parseResolution("ambiguous : How does it relate?").resolution())
+                .isEqualTo(QueryTranslator.Resolution.AMBIGUOUS);
+        assertThatThrownBy(() -> QueryTranslator.parseResolution("How does it relate?")).isInstanceOf(IllegalStateException.class);
+
+        assertThat(QueryTranslator.hasReference("人格面具和它有什么关系？")).isTrue();
+        assertThat(QueryTranslator.hasReference("How does it relate to the persona?")).isTrue();
+        assertThat(QueryTranslator.hasReference("荣格说的阴影是什么？")).isFalse();
+        assertThat(QueryTranslator.hasReference("What is the shadow in Jung's theory?")).isFalse();   // theory 里的 he 不算
+    }
+
+    @Test
     void rerankFailureFallsBackToCosineOrderTopK() {
         var store = org.mockito.Mockito.mock(org.springframework.ai.vectorstore.VectorStore.class);
         var reranker = org.mockito.Mockito.mock(Reranker.class);

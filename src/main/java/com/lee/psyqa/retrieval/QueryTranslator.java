@@ -29,14 +29,34 @@ import java.util.regex.Pattern;
  * 多轮对话（T4）：有历史时改用 prompts/rewrite.st，结合最近几轮把追问改写成一句独立的英文问题
  * （"那他和弗洛伊德有什么不同" → "How does Jung differ from Freud …"）。翻译和改写合成一次调用。
  * 有历史时英文问题也要改写（指代问题和语言无关）。
+ * <p>
+ * 新对话 + 长期记忆（T9）：没有本段历史、问题里有指代词、并且召回到了以前聊过的主题时，改用 prompts/resolve-memory.st，
+ * 让模型判断指代是否只指向其中一个主题：是就替换（RESOLVED），几个都说得通就保留原样（AMBIGUOUS，由 AnswerService 反问），
+ * 问题自己说全了就照常翻译（NONE）。这次调用替代原来的翻译调用，不多花一次。
  */
 @Component
 public class QueryTranslator {
 
     private static final Pattern HAN = Pattern.compile("\\p{IsHan}");
 
+    /** 新对话里指代和记忆主题的关系（T9）。没走记忆改写时一律 NONE。 */
+    public enum Resolution { NONE, RESOLVED, AMBIGUOUS }
+
     /** @param text 英文检索语句 */
-    public record Translation(String text, long latencyMs, int promptTokens, int completionTokens) {}
+    public record Translation(String text, long latencyMs, int promptTokens, int completionTokens, Resolution resolution) {
+
+        public Translation(String text, long latencyMs, int promptTokens, int completionTokens) {
+            this(text, latencyMs, promptTokens, completionTokens, Resolution.NONE);
+        }
+    }
+
+    /**
+     * 可能需要上文才能理解的词。只是决定要不要把记忆主题交给模型的粗筛，误判的代价只是换了一个 prompt，
+     * 最终由模型判断（"Java 的 HashMap，它是怎么扩容的"里的"它"指问题自己点名的东西 → NONE）。
+     */
+    private static final Pattern REFERENCE = Pattern.compile(
+            "[它他她]|这个|那个|这种|那种|这些|那些|前者|后者|上次|对应的"
+                    + "|(?i)\\b(it|its|this|that|these|those|he|him|his|she|her|the latter|the former)\\b");
 
     /** 改写时带上最近几轮；更早的对话对指代消解帮助很小，还会拉长 prompt。 */
     static final int REWRITE_TURNS = 3;
@@ -51,13 +71,20 @@ public class QueryTranslator {
     private final ChatClient chatClient;
     private final String template;
     private final String rewriteTemplate;
+    private final String resolveTemplate;
 
     public QueryTranslator(ChatClient.Builder chatClientBuilder,
                            @Value("classpath:prompts/translate.st") Resource template,
-                           @Value("classpath:prompts/rewrite.st") Resource rewriteTemplate) throws IOException {
+                           @Value("classpath:prompts/rewrite.st") Resource rewriteTemplate,
+                           @Value("classpath:prompts/resolve-memory.st") Resource resolveTemplate) throws IOException {
         this.chatClient = chatClientBuilder.build();
         this.template = template.getContentAsString(StandardCharsets.UTF_8);
         this.rewriteTemplate = rewriteTemplate.getContentAsString(StandardCharsets.UTF_8);
+        this.resolveTemplate = resolveTemplate.getContentAsString(StandardCharsets.UTF_8);
+    }
+
+    public static boolean hasReference(String question) {
+        return REFERENCE.matcher(question).find();
     }
 
     public static boolean needsTranslation(String question) {
@@ -73,6 +100,14 @@ public class QueryTranslator {
      * 有历史：不论中英文都改写成独立的英文问题。
      */
     public Optional<Translation> translate(String question, List<Turn> history) {
+        return translate(question, history, List.of());
+    }
+
+    /** @param memoryTopics 召回到的以前聊过的主题（T9）；只在没有本段历史时使用 */
+    public Optional<Translation> translate(String question, List<Turn> history, List<String> memoryTopics) {
+        if (history.isEmpty() && !memoryTopics.isEmpty() && hasReference(question)) {
+            return Optional.of(resolveWithMemory(question, memoryTopics));
+        }
         if (history.isEmpty()) {
             return needsTranslation(question)
                     ? Optional.of(call(template, question, maxTranslationChars(question)))
@@ -90,6 +125,32 @@ public class QueryTranslator {
                     .append("Assistant: ").append(a.length() > ANSWER_CHARS ? a.substring(0, ANSWER_CHARS) + "…" : a).append('\n');
         }
         return sb.append("Latest message: ").append(question.strip()).toString();
+    }
+
+    private Translation resolveWithMemory(String question, List<String> topics) {
+        StringBuilder user = new StringBuilder("Topics from earlier conversations:\n");
+        topics.forEach(t -> user.append("- ").append(t.strip()).append('\n'));
+        user.append("Message: ").append(question.strip());
+        Translation t = call(resolveTemplate, user.toString(), Integer.MAX_VALUE);
+        Parsed p = parseResolution(t.text());
+        validate(p.text(), REWRITE_MAX_CHARS);
+        return new Translation(p.text(), t.latencyMs(), t.promptTokens(), t.completionTokens(), p.resolution());
+    }
+
+    record Parsed(Resolution resolution, String text) {}
+
+    /** "RESOLVED: …" → (RESOLVED, "…")。没有合法前缀时抛异常，由 RetrievalService 退回原问题检索。 */
+    static Parsed parseResolution(String line) {
+        int colon = line.indexOf(':');
+        if (colon > 0) {
+            String head = line.substring(0, colon).strip().toUpperCase(java.util.Locale.ROOT);
+            for (Resolution r : Resolution.values()) {
+                if (head.equals(r.name())) {
+                    return new Parsed(r, clean(line.substring(colon + 1)));
+                }
+            }
+        }
+        throw new IllegalStateException("记忆改写输出缺少 NONE / RESOLVED / AMBIGUOUS 前缀：" + abbreviate(line));
     }
 
     private Translation call(String system, String user, int maxChars) {

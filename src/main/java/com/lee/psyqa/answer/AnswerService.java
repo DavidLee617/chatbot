@@ -7,6 +7,7 @@ import com.lee.psyqa.conversation.ConversationStore;
 import com.lee.psyqa.conversation.ConversationSummarizer;
 import com.lee.psyqa.conversation.Turn;
 import com.lee.psyqa.guard.CrisisDetector;
+import com.lee.psyqa.memory.Memory;
 import com.lee.psyqa.memory.MemoryService;
 import com.lee.psyqa.model.AskResult;
 import com.lee.psyqa.model.AskResult.Route;
@@ -213,14 +214,24 @@ public class AnswerService {
             conv = afterSummary;
         }
 
-        RetrievalService.Result r = retrieval.retrieve(question, conv.turns());
+        // 记忆在检索之前召回（T9）：新对话里"它"这类指代要靠以前聊过的主题来解析
+        MemoryService.Recall recall = recall(userId, question);
+        List<String> topics = conv.turns().isEmpty() ? recall.recentTopics().stream().map(Memory::content).toList() : List.of();
+        RetrievalService.Result r = retrieval.retrieve(question, conv.turns(), topics);
+        if (r.translation() != null && r.translation().resolution() == QueryTranslator.Resolution.AMBIGUOUS) {
+            return new Prepared(Route.CLARIFY, clarify(topics) + followUpNote(crisis), List.of(), null, List.of(), r, crisis, null,
+                    summarized, conv.turns(), recall);
+        }
         if (r.kept().isEmpty()) {
             return new Prepared(Route.REFUSED, REFUSAL + followUpNote(crisis), List.of(), null, List.of(), r, crisis, null, summarized,
-                    conv.turns(), MemoryService.Recall.EMPTY);
+                    conv.turns(), recall);
         }
 
-        MemoryService.Recall recall = recall(userId, question);
-        ContextBudget.Plan plan = budget.plan(promptBuilder.build(question, List.of()), r.kept(), conv.unsummarized(), conv.summary(),
+        // 指代按记忆解析成功时，告诉生成模型"它"指什么：生成用的是用户原话，原话里只有"它"
+        String promptQuestion = r.translation() != null && r.translation().resolution() == QueryTranslator.Resolution.RESOLVED
+                ? question + "\n（结合以前的对话，这个问题指的是：" + r.translation().text() + "）"
+                : question;
+        ContextBudget.Plan plan = budget.plan(promptBuilder.build(promptQuestion, List.of()), r.kept(), conv.unsummarized(), conv.summary(),
                 recall.render());
         List<SourceRef> sources = new ArrayList<>();
         for (int i = 0; i < plan.chunks().size(); i++) {
@@ -230,12 +241,20 @@ public class AnswerService {
             sources.add(new SourceRef(i + 1, str(m.get("book")), str(m.get("author")), str(m.get("chapter")),
                     RetrievalService.score(d), text.length() > SNIPPET_CHARS ? text.substring(0, SNIPPET_CHARS) + "…" : text));
         }
-        return new Prepared(Route.ANSWERED, null, sources, promptBuilder.build(question, plan.chunks()),
+        return new Prepared(Route.ANSWERED, null, sources, promptBuilder.build(promptQuestion, plan.chunks()),
                 historyMessages(plan.memory(), plan.summary(), plan.turns()), r, crisis, plan, summarized, conv.turns(), recall);
     }
 
     private String followUpNote(CrisisDetector.Decision crisis) {
         return crisis.followUp() ? "\n\n---\n" + crisisDetector.followUpNote() : "";
+    }
+
+    /** 反问用的固定文本。这一轮照常存进对话历史，用户下一句回答时，改写能从历史里读到候选主题。 */
+    static String clarify(List<String> topics) {
+        String names = String.join("」、「", topics);
+        return topics.size() == 1
+                ? "你是在接着问以前聊过的「" + names + "」吗？这段对话里还没有提到你说的那个对象，可以把问题说完整一点，比如直接写出概念的名字。"
+                : "你指的是以前聊过的「" + names + "」中的哪一个，还是别的？可以把问题说完整一点，比如直接写出概念的名字。";
     }
 
     /** 召回失败（数据库没起来等）只记日志，按没有记忆回答。 */
@@ -314,7 +333,7 @@ public class AnswerService {
                 c.memoryDropped() ? "1" : "0",
                 c.overBudget() ? ",over" : "");
         log.info("route={} outcome={} q_len={} crisis_layer={} crisis_score={} theory_score={} ctx_crisis_score={} ctx_theory_score={} "
-                        + "crisis_follow_up={} crisis_ms={} query_mode={} translate_ms={} translate_tokens={} translation=\"{}\" "
+                        + "crisis_follow_up={} crisis_ms={} query_mode={} translate_ms={} translate_tokens={} translation=\"{}\" translate_resolution={} "
                         + "ctx_budget={} ctx_est={} ctx_fixed={} ctx_chunks={} ctx_turns={} ctx_summary={} ctx_memory={} ctx_trimmed={} summarized={} "
                         + "memory_facts={} memory_topics={} memory_ms={} "
                         + "topk_scores=[{}] kept={} prompt_tokens={} completion_tokens={} latency_ms={}",
@@ -323,7 +342,7 @@ public class AnswerService {
                 "%.2f".formatted(p.crisis().contextCrisisScore()), "%.2f".formatted(p.crisis().contextTheoryScore()),
                 p.crisis().followUp(), p.crisis().latencyMs(),
                 r == null ? "-" : r.mode(),
-                t == null ? 0 : t.latencyMs(), t == null ? 0 : t.promptTokens() + t.completionTokens(), t == null ? "" : t.text(),
+                t == null ? 0 : t.latencyMs(), t == null ? 0 : t.promptTokens() + t.completionTokens(), t == null ? "" : t.text(), t == null ? "-" : t.resolution(),
                 contextProps.maxPromptTokens(), c == null ? 0 : c.totalTokens(), c == null ? 0 : c.fixedTokens(),
                 c == null ? 0 : c.chunkTokens(), c == null ? 0 : c.turnTokens(), c == null ? 0 : c.summaryTokens(), c == null ? 0 : c.memoryTokens(), trimmed, p.summarized(),
                 p.recall().facts().size(), p.recall().topics().size(), p.recall().latencyMs(),

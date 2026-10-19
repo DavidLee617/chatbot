@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
@@ -45,6 +46,7 @@ class AnswerServiceTest {
         chatClient = mock(ChatClient.class);
         ChatClient.Builder builder = mock(ChatClient.Builder.class);
         when(builder.build()).thenReturn(chatClient);
+        when(memory.recall(any(), any())).thenReturn(com.lee.psyqa.memory.MemoryService.Recall.EMPTY);
         promptBuilder = new PromptBuilder(new ClassPathResource("prompts/answer.st"));
         service = new AnswerService(CrisisDetectorTest.detector(mock(EmbeddingModel.class), 0.6), retrieval, promptBuilder, builder, new ObjectMapper(),
                 store, summarizer,
@@ -67,7 +69,7 @@ class AnswerServiceTest {
 
     @Test
     void belowThresholdRefusesWithoutModel() {
-        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.31, 0.28)));
+        when(retrieval.retrieve(anyString(), anyList(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.31, 0.28)));
         AskResult r = service.ask("今天天气怎么样");
         assertThat(r.route()).isEqualTo(AskResult.Route.REFUSED);
         verifyNoInteractions(chatClient);
@@ -75,7 +77,7 @@ class AnswerServiceTest {
 
     @Test
     void streamEmitsRouteTokenDoneForRefusal() {
-        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of()));
+        when(retrieval.retrieve(anyString(), anyList(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of()));
         StepVerifier.create(service.stream("今天天气怎么样"))
                 .assertNext(e -> assertThat(e).isEqualTo(new AnswerService.StreamEvent("route", "\"REFUSED\"")))
                 .assertNext(e -> assertThat(e.name()).isEqualTo("token"))
@@ -86,19 +88,19 @@ class AnswerServiceTest {
 
     @Test
     void streamWithConversationIdStoresTheTurnAndPassesHistoryToRetrieval() {
-        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
+        when(retrieval.retrieve(anyString(), anyList(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
         StepVerifier.create(service.stream("今天天气怎么样", "c1")).expectNextCount(3).verifyComplete();
         StepVerifier.create(service.stream("那明天呢", "c1")).expectNextCount(3).verifyComplete();
 
         assertThat(store.history("c1")).extracting(com.lee.psyqa.conversation.Turn::question)
                 .containsExactly("今天天气怎么样", "那明天呢");
         // 第二轮检索时带上了第一轮的历史
-        verify(retrieval).retrieve(eq("那明天呢"), argThat(h -> h.size() == 1));
+        verify(retrieval).retrieve(eq("那明天呢"), argThat(h -> h.size() == 1), anyList());
     }
 
     @Test
     void crisisTurnIsMarkedAndNextAnswerKeepsTheHotline() {
-        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
+        when(retrieval.retrieve(anyString(), anyList(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
         StepVerifier.create(service.stream("我不想活了", "c2")).expectNextCount(3).verifyComplete();
         assertThat(store.history("c2").get(0).crisis()).isTrue();
 
@@ -113,7 +115,7 @@ class AnswerServiceTest {
 
     @Test
     void oldTurnsAreSummarizedInBatchesOnceEnoughAccumulate() {
-        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
+        when(retrieval.retrieve(anyString(), anyList(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
         when(summarizer.summarize(anyList())).thenReturn("- 前四轮要点");
         for (int i = 0; i < 8; i++) {   // 8 轮没摘要 = keepRawTurns 4 + summarizeBatch 4
             store.append("c", new com.lee.psyqa.conversation.Turn("q" + i, "a" + i));
@@ -138,9 +140,33 @@ class AnswerServiceTest {
 
     @Test
     void refusedTurnDoesNotWriteMemory() {
-        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
+        when(retrieval.retrieve(anyString(), anyList(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
         StepVerifier.create(service.stream("今天天气怎么样", "c3", "u1")).expectNextCount(3).verifyComplete();
-        verifyNoInteractions(memory);   // 拒答时不召回也不写入
+        verify(memory, never()).writeAsync(any(), any(), any());   // 拒答时不写入
+    }
+
+    @Test
+    void ambiguousReferenceInNewConversationAsksInsteadOfAnswering() {
+        var topic = new com.lee.psyqa.memory.Memory(java.util.UUID.randomUUID(), "u1", com.lee.psyqa.memory.Memory.Kind.TOPIC,
+                "荣格的阴影", new float[]{1}, java.time.Instant.now(), java.time.Instant.now());
+        var topic2 = new com.lee.psyqa.memory.Memory(java.util.UUID.randomUUID(), "u1", com.lee.psyqa.memory.Memory.Kind.TOPIC,
+                "荣格的人格面具", new float[]{1}, java.time.Instant.now(), java.time.Instant.now());
+        when(memory.recall(eq("u1"), anyString())).thenReturn(
+                new com.lee.psyqa.memory.MemoryService.Recall(List.of(), List.of(), List.of(), List.of(topic, topic2), 1));
+        var t = new com.lee.psyqa.retrieval.QueryTranslator.Translation("How does it relate to the collective unconscious?", 1, 1, 1,
+                com.lee.psyqa.retrieval.QueryTranslator.Resolution.AMBIGUOUS);
+        when(retrieval.retrieve(anyString(), anyList(), anyList()))
+                .thenReturn(new RetrievalService.Result(List.of(), List.of(), List.of(), RetrievalService.QueryMode.BOTH, t, null));
+
+        StepVerifier.create(service.stream("它和集体无意识是什么关系？", "c4", "u1"))
+                .assertNext(e -> assertThat(e.data()).isEqualTo("\"CLARIFY\""))
+                .assertNext(e -> assertThat(e.data()).contains("荣格的阴影").contains("荣格的人格面具"))
+                .assertNext(e -> assertThat(e.name()).isEqualTo("done"))
+                .verifyComplete();
+        // 新对话（没有历史）才把记忆主题交给改写
+        verify(retrieval).retrieve(anyString(), argThat(h -> h.isEmpty()), eq(List.of("荣格的阴影", "荣格的人格面具")));
+        verifyNoInteractions(chatClient);
+        assertThat(store.history("c4")).hasSize(1);   // 反问这一轮存进历史，用户下一句能接上
     }
 
     @Test
