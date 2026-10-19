@@ -39,6 +39,7 @@
 | 7 | `eval/results/20261006-005201-zh.md` 和 `-005321-en.md` | 当前基线（结论见第 7 节） |
 | 8 | `src/main/java/com/lee/psyqa/guard/CrisisDetector.java` + `src/main/resources/crisis/` | 危机识别两层规则（T2）、强 / 弱关键词、两类例句 |
 | 9 | `src/main/java/com/lee/psyqa/eval/` | `EvalService`（跑评估）、`EvalReport`（算指标）、`EvidenceMatcher`（判断命中） |
+| 10 | `docs/PROBLEMS-AND-METRICS.md` | T0–T9 遇到的问题和解决办法汇总；每个评价指标不够时怎么排查、怎么改 |
 
 ---
 
