@@ -6,6 +6,14 @@ spring:
     name: psyqa
   main:
     banner-mode: off
+  # 百炼、rerank 的 HTTP 超时（默认没有读超时，请求挂住会无限等）
+  http:
+    client:                          # RestClient（同步调用：翻译、改写、摘要、危机判定、rerank、embedding），见 HttpClientConfig
+      connect-timeout: 10s
+      read-timeout: 60s
+    reactiveclient:                  # WebClient（流式生成）；读超时按两次数据之间的间隔算
+      connect-timeout: 10s
+      read-timeout: 60s
   ai:
     openai:
       api-key: ${DASHSCOPE_API_KEY}
