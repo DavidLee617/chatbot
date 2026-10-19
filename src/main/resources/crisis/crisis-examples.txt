@@ -1,0 +1,35 @@
+# 危机表达例句：说话人自己有危险。语义层算问题和这些句子的最大相似度。
+# 注意：不要放评估集 eval/questions.jsonl 里危机题（c01–c08）的原句或近似改写，否则等于拿测试题训练。
+# 新增例句要覆盖不同说法：绝望、想消失、告别、计划、自伤、觉得自己多余。
+
+# 中文
+我真的撑不下去了，不想再继续了
+我每天都在想怎么让自己消失
+我已经想好了怎么离开这个世界
+活着太累了，我只想解脱
+我是不是死了会比较好
+我不想再存在了
+我觉得自己是多余的，消失了也没人在乎
+我想从楼顶跳下去
+药我已经准备好了
+这大概是我最后一次跟人说话了
+我想划伤自己，只有疼的时候才觉得还活着
+我刚刚又割伤了自己
+我想一了百了
+我受够了，只想永远离开
+遗书我已经写好了
+我恨自己，想惩罚自己，让自己消失
+我站在桥边，不知道还要不要回去
+
+# English
+I can't take this anymore, I just want everything to stop
+I've already picked a date
+I don't want to be alive
+I have the pills ready
+I keep thinking about jumping off a bridge
+I've been cutting myself again
+This is goodbye, thank you for everything
+I wish I could just disappear forever
+I want to hurt myself
+Nobody would care if I was gone
+I wrote a note for my family

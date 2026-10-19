@@ -1,0 +1,37 @@
+# 强关键词：第一人称的意图表达。包含匹配、不区分大小写，命中直接判 CRISIS，不看语义。
+# 这是安全底线：宁可多报。只放"说话人自己想这么做"的说法，单纯的话题词放 weak-keywords.txt。
+# 一行一个，# 开头为注释。
+
+# 中文
+想自杀
+要自杀
+去自杀
+不想活
+活不下去
+活着没意思
+活着没有意义
+想死
+想去死
+去死算了
+结束自己的生命
+结束我的生命
+了结自己
+想轻生
+想割腕
+想跳楼
+想上吊
+想伤害自己
+想自残
+
+# English
+kill myself
+killing myself
+end my life
+ending my life
+want to die
+wanna die
+i'm suicidal
+i am suicidal
+feel suicidal
+hurt myself
+cut myself

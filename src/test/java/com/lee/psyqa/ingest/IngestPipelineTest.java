@@ -48,7 +48,12 @@ class IngestPipelineTest {
             [Illustration: A picture
             of something]
 
-            Second paragraph of chapter one.
+            Second paragraph of chapter one. _An italic quote that
+            wraps across lines._
+
+            _A dream quoted over two paragraphs,
+
+            ending here._
 
             [Footnote 1: Some reference.]
 
@@ -67,7 +72,7 @@ class IngestPipelineTest {
         String all = String.join("\n", paras);
 
         assertThat(all).doesNotContain("License", "START OF", "END OF", "must not appear");
-        assertThat(all).doesNotContain("Illustration", "Footnote", "[1]", "_Gutenberg_");
+        assertThat(all).doesNotContain("Illustration", "Footnote", "[1]", "_");   // 包括跨行、跨段的斜体
         assertThat(all).doesNotContain("CONTENTS", "THE SECOND THING 17");   // 目录被去掉
         // 段内硬换行被合并
         assertThat(paras).contains("This is the first paragraph of chapter one, hard wrapped at about seventy characters like Gutenberg does.");

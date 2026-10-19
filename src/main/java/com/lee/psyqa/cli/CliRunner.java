@@ -1,15 +1,20 @@
 package com.lee.psyqa.cli;
 
 import com.lee.psyqa.answer.AnswerService;
+import com.lee.psyqa.eval.ConversationEval;
+import com.lee.psyqa.eval.EvalService;
 import com.lee.psyqa.ingest.IngestService;
 import com.lee.psyqa.model.AskResult;
 import com.lee.psyqa.model.SourceRef;
+import com.lee.psyqa.retrieval.RetrievalService;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.ExitCodeGenerator;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Path;
+
 /**
- * 解析 ingest / ask 命令。不带参数时什么都不做（Web 模式）。
+ * 解析 ingest / ask / eval 命令。不带参数时什么都不做（Web 模式）。
  * 退出码通过 ExitCodeGenerator 交给 main（≈ Main 返回 int）。
  */
 @Component
@@ -19,16 +24,23 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
             用法：
               java -jar psyqa.jar ingest [--book <file>]
               java -jar psyqa.jar ask "荣格说的集体无意识是什么？"
+              java -jar psyqa.jar eval [--file eval/questions.jsonl] [--k 5] [--lang zh|en] [--mode original|translated|both]
+              java -jar psyqa.jar eval --conversations [--file eval/conversations.jsonl] [--no-rewrite] [--mode ...]
               java -jar psyqa.jar                      # 启动 Web 服务
             """;
 
     private final IngestService ingestService;
     private final AnswerService answerService;
+    private final EvalService evalService;
+    private final ConversationEval conversationEval;
     private int exitCode = 0;
 
-    public CliRunner(IngestService ingestService, AnswerService answerService) {
+    public CliRunner(IngestService ingestService, AnswerService answerService, EvalService evalService,
+                     ConversationEval conversationEval) {
         this.ingestService = ingestService;
         this.answerService = answerService;
+        this.evalService = evalService;
+        this.conversationEval = conversationEval;
     }
 
     @Override
@@ -38,6 +50,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
         }
         switch (args[0]) {
             case "ingest" -> ingest(args);
+            case "eval" -> eval(args);
             case "ask" -> {
                 if (args.length < 2 || args[1].isBlank()) {
                     usage();
@@ -64,6 +77,43 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
             System.out.println("失败的 chunkId：" + s.failedChunkIds());
             exitCode = 1;
         }
+    }
+
+    private void eval(String[] args) throws Exception {
+        Path file = null;
+        int k = 5;
+        boolean english = false;
+        boolean conversations = false;
+        boolean rewrite = true;
+        RetrievalService.QueryMode mode = null;   // null = 用配置里的 psyqa.retrieval.query-mode
+        for (int i = 1; i < args.length; i++) {
+            switch (args[i]) {
+                case "--file" -> file = Path.of(args[++i]);
+                case "--k" -> k = Integer.parseInt(args[++i]);
+                case "--lang" -> english = "en".equalsIgnoreCase(args[++i]);
+                case "--mode" -> mode = RetrievalService.QueryMode.valueOf(args[++i].toUpperCase());
+                case "--conversations" -> conversations = true;
+                case "--no-rewrite" -> rewrite = false;
+                default -> {
+                    usage();
+                    return;
+                }
+            }
+        }
+        if (conversations) {
+            ConversationEval.Outcome out = conversationEval.run(file == null ? Path.of("eval/conversations.jsonl") : file,
+                    k, rewrite, mode, Path.of("eval/results"));
+            System.out.print(out.summary());
+            System.out.println("完整报告：" + out.markdownFile());
+            return;
+        }
+        if (file == null) {
+            file = Path.of("eval/questions.jsonl");
+        }
+        EvalService.Outcome out = evalService.run(new EvalService.Options(file, k, english, mode, Path.of("eval/results")));
+        System.out.println();
+        System.out.print(out.report().summary());
+        System.out.println("完整报告：" + out.markdownFile());
     }
 
     private void ask(String question) {

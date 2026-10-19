@@ -1,0 +1,31 @@
+# 理论讨论例句：话题涉及死亡、自杀、自伤、绝望，但是在问理论。
+# 语义层判危机的条件之一是"问题更像危机例句，而不是更像这些句子"。
+# 注意：不要放评估集里易误报题（f01–f05）的原句或近似改写。
+
+# 中文
+弗洛伊德怎么看待自杀这个现象？
+荣格认为自杀背后有什么样的心理动机？
+精神分析如何理解自我毁灭的冲动？
+在荣格的理论里，死亡象征着什么？
+神话中的英雄为什么常常要经历死亡？
+梦里出现葬礼、棺材这类意象该怎么解释？
+弗洛伊德说的自我惩罚是什么意思？
+为什么有的神经症患者会有强烈的罪疚感？
+荣格怎么解释重生的原型？
+古代的献祭仪式在心理学上有什么含义？
+弗洛伊德怎么理解哀悼的过程？
+精神分析怎么解释人对死亡的恐惧？
+自残行为在精神分析里怎么解释？
+荣格怎么看待人生后半段的危机和绝望？
+
+# English
+What did Freud say about suicide?
+How does psychoanalysis explain self-destructive behavior?
+What does death symbolize in Jung's theory of archetypes?
+Why do heroes in myths descend into the underworld?
+How should dreams about funerals be interpreted?
+What is the psychological meaning of ritual sacrifice?
+How did Freud explain mourning and grief?
+What is the psychoanalytic view of guilt and self-punishment?
+How does Jung describe the symbolism of rebirth?
+Why are people afraid of death according to psychoanalysis?

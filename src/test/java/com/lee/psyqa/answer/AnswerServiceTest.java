@@ -1,14 +1,15 @@
 package com.lee.psyqa.answer;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.lee.psyqa.config.PsyQaProperties;
-import com.lee.psyqa.guard.CrisisGuard;
+import com.lee.psyqa.conversation.ConversationStore;
+import com.lee.psyqa.guard.CrisisDetectorTest;
 import com.lee.psyqa.model.AskResult;
 import com.lee.psyqa.retrieval.RetrievalService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.core.io.ClassPathResource;
 import reactor.test.StepVerifier;
 
@@ -16,7 +17,10 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -30,19 +34,21 @@ class AnswerServiceTest {
     private ChatClient chatClient;
     private AnswerService service;
     private PromptBuilder promptBuilder;
+    private final ConversationStore store = new ConversationStore();
+    private final com.lee.psyqa.conversation.ConversationSummarizer summarizer =
+            mock(com.lee.psyqa.conversation.ConversationSummarizer.class);
 
     @BeforeEach
     void setUp() throws Exception {
-        var props = new PsyQaProperties(
-                new PsyQaProperties.Retrieval(5, 0.45),
-                new PsyQaProperties.Ingest("data/raw", 2000, 200, 10),
-                new PsyQaProperties.Crisis(new ClassPathResource("crisis-keywords.txt"), "热线 12356"));
         retrieval = mock(RetrievalService.class);
         chatClient = mock(ChatClient.class);
         ChatClient.Builder builder = mock(ChatClient.Builder.class);
         when(builder.build()).thenReturn(chatClient);
         promptBuilder = new PromptBuilder(new ClassPathResource("prompts/answer.st"));
-        service = new AnswerService(new CrisisGuard(props), retrieval, promptBuilder, builder, new ObjectMapper());
+        service = new AnswerService(CrisisDetectorTest.detector(mock(EmbeddingModel.class), 0.6), retrieval, promptBuilder, builder, new ObjectMapper(),
+                store, summarizer,
+                new com.lee.psyqa.config.PsyQaProperties(null, null, null,
+                        new com.lee.psyqa.config.PsyQaProperties.Context(6000, 2, 4, 4)));
     }
 
     @Test
@@ -60,7 +66,7 @@ class AnswerServiceTest {
 
     @Test
     void belowThresholdRefusesWithoutModel() {
-        when(retrieval.retrieve(anyString())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.31, 0.28)));
+        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.31, 0.28)));
         AskResult r = service.ask("今天天气怎么样");
         assertThat(r.route()).isEqualTo(AskResult.Route.REFUSED);
         verifyNoInteractions(chatClient);
@@ -68,13 +74,42 @@ class AnswerServiceTest {
 
     @Test
     void streamEmitsRouteTokenDoneForRefusal() {
-        when(retrieval.retrieve(anyString())).thenReturn(new RetrievalService.Result(List.of(), List.of()));
+        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of()));
         StepVerifier.create(service.stream("今天天气怎么样"))
                 .assertNext(e -> assertThat(e).isEqualTo(new AnswerService.StreamEvent("route", "\"REFUSED\"")))
                 .assertNext(e -> assertThat(e.name()).isEqualTo("token"))
                 .assertNext(e -> assertThat(e.name()).isEqualTo("done"))
                 .verifyComplete();
         verify(chatClient, never()).prompt();
+    }
+
+    @Test
+    void streamWithConversationIdStoresTheTurnAndPassesHistoryToRetrieval() {
+        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
+        StepVerifier.create(service.stream("今天天气怎么样", "c1")).expectNextCount(3).verifyComplete();
+        StepVerifier.create(service.stream("那明天呢", "c1")).expectNextCount(3).verifyComplete();
+
+        assertThat(store.history("c1")).extracting(com.lee.psyqa.conversation.Turn::question)
+                .containsExactly("今天天气怎么样", "那明天呢");
+        // 第二轮检索时带上了第一轮的历史
+        verify(retrieval).retrieve(eq("那明天呢"), argThat(h -> h.size() == 1));
+    }
+
+    @Test
+    void oldTurnsAreSummarizedInBatchesOnceEnoughAccumulate() {
+        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
+        when(summarizer.summarize(anyList())).thenReturn("- 前四轮要点");
+        for (int i = 0; i < 8; i++) {   // 8 轮没摘要 = keepRawTurns 4 + summarizeBatch 4
+            store.append("c", new com.lee.psyqa.conversation.Turn("q" + i, "a" + i));
+        }
+
+        StepVerifier.create(service.stream("下一问", "c")).expectNextCount(3).verifyComplete();
+
+        verify(summarizer).summarize(argThat(turns -> turns.size() == 4 && turns.get(0).question().equals("q0")));
+        var snap = store.snapshot("c");
+        assertThat(snap.summary()).isEqualTo("- 前四轮要点");
+        assertThat(snap.summarizedCount()).isEqualTo(4);
+        assertThat(snap.turns()).hasSize(9);   // 原文仍保留，只是不再放进 prompt
     }
 
     @Test

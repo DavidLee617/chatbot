@@ -22,7 +22,9 @@
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 16px/1.65 -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", "Segoe UI", sans-serif; }
   .wrap { max-width: 760px; margin: 0 auto; min-height: 100vh; display: flex; flex-direction: column; padding: 0 16px; }
-  header { padding: 20px 0 8px; }
+  header { padding: 20px 0 8px; display: flex; align-items: flex-start; gap: 12px; }
+  header .title { flex: 1; min-width: 0; }
+  header button { padding: 6px 12px; font-size: 14px; background: transparent; color: var(--accent); border: 1px solid var(--accent); }
   header h1 { margin: 0; font-size: 20px; }
   header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
   #messages { flex: 1; padding: 12px 0 120px; }
@@ -54,8 +56,11 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>PsyQA · 心理学经典问答</h1>
-    <p>基于荣格、弗洛伊德的公版英文著作回答，并标注出处。仅作理论讨论，不提供心理咨询。</p>
+    <div class="title">
+      <h1>PsyQA · 心理学经典问答</h1>
+      <p>基于荣格、弗洛伊德的公版英文著作回答，并标注出处。仅作理论讨论，不提供心理咨询。可以接着追问。</p>
+    </div>
+    <button id="new-chat" type="button">新对话</button>
   </header>
   <div id="messages"></div>
 </div>
@@ -71,6 +76,17 @@
   const $form = document.getElementById('form');
   const $q = document.getElementById('q');
   const $send = document.getElementById('send');
+
+  // 会话 id：同一个 id 下的提问是一段多轮对话，服务端按它保存历史（闲置 30 分钟后清理）
+  const newId = () => (crypto.randomUUID ? crypto.randomUUID()
+      : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
+  let conversationId = newId();
+  document.getElementById('new-chat').addEventListener('click', () => {
+    if ($send.disabled) return;   // 回答还没结束时不切换
+    conversationId = newId();
+    $messages.innerHTML = '';
+    $q.focus();
+  });
 
   function el(tag, cls, text) {
     const e = document.createElement(tag);
@@ -103,7 +119,7 @@
 
     let text = '';
     $send.disabled = true;
-    const es = new EventSource('/api/chat?q=' + encodeURIComponent(question));
+    const es = new EventSource('/api/chat?q=' + encodeURIComponent(question) + '&cid=' + encodeURIComponent(conversationId));
     const finish = () => { es.close(); $send.disabled = false; $q.focus(); };
 
     es.addEventListener('route', e => {

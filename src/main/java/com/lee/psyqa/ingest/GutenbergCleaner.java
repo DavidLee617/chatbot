@@ -18,7 +18,6 @@ public class GutenbergCleaner {
     private static final Pattern ILLUSTRATION = Pattern.compile("\\[Illustration[^\\]]*\\]");
     private static final Pattern FOOTNOTE = Pattern.compile("\\[Footnote[^\\]]*\\]");
     private static final Pattern FOOTNOTE_REF = Pattern.compile("\\[(\\d{1,3}|[A-Z]{1,2})\\]");   // [12]、[D]
-    private static final Pattern ITALIC = Pattern.compile("_([^_\\n]+)_");
     private static final Pattern BLANK_LINES = Pattern.compile("\\n\\s*\\n");
 
     /**
@@ -39,11 +38,12 @@ public class GutenbergCleaner {
         text = ILLUSTRATION.matcher(text).replaceAll("");
         text = FOOTNOTE.matcher(text).replaceAll("");
         text = FOOTNOTE_REF.matcher(text).replaceAll("");
-        text = ITALIC.matcher(text).replaceAll("$1");
 
         List<String> paragraphs = new ArrayList<>();
         for (String block : BLANK_LINES.split(text)) {
-            String p = block.replaceAll("\\s+", " ").strip();
+            // Gutenberg 用 _下划线_ 表示斜体，常常跨行甚至跨段（整段引用的梦境），成对匹配会漏；
+            // 英文正文里下划线没有别的用途，直接全部去掉
+            String p = block.replace("_", "").replaceAll("\\s+", " ").strip();
             if (!p.isEmpty()) {
                 paragraphs.add(p);
             }

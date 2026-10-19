@@ -51,12 +51,27 @@ psyqa:
   retrieval:
     top-k: 5
     similarity-threshold: 0.45     # 初始值，按日志里的分数分布再调
+    # original / translated / both（T3 查询翻译）。按评估对比结果再定默认值
+    query-mode: both
+    # Milvus HNSW 搜索参数。默认值会漏掉真正最近的块（a14 实测），64 时和暴力计算一致
+    hnsw-ef: 64
   ingest:
     books-dir: data/raw
     chunk-size-chars: 2000
     chunk-overlap-chars: 200
     embed-batch-size: 10           # text-embedding-v4 单次最多 10 条，超过会报错
+  context:
+    # 上下文预算（T4），规则见 ContextBudget：规则+问题 > 前 2 块 > 最近对话 > 其余块 > 摘要
+    max-prompt-tokens: 6000
+    min-chunks: 2
+    keep-raw-turns: 4              # 摘要之后至少保留原文的最近 4 轮
+    summarize-batch: 4             # 没摘要的轮次达到 4+4=8 轮时，把最早 4 轮压成要点（只追加）
   crisis:
-    keywords-file: classpath:crisis-keywords.txt
+    # 规则见 CrisisDetector：强关键词直接判危机；否则比较问题和两类例句的相似度
+    strong-keywords-file: classpath:crisis/strong-keywords.txt
+    weak-keywords-file: classpath:crisis/weak-keywords.txt
+    examples-file: classpath:crisis/crisis-examples.txt
+    theory-examples-file: classpath:crisis/theory-examples.txt
+    semantic-threshold: 0.52       # 2026-10-07 按评估扫描选定：0.506–0.549 之间 0 漏判 0 误报，取偏"多报"的一侧
     # 上线前再核对一次号码
     hotline-text: "全国心理援助热线 12356；遇到紧急危险请拨打 120 / 110"

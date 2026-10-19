@@ -1,0 +1,53 @@
+package com.lee.psyqa.retrieval;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.ai.document.Document;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/** T3：查询翻译的辅助逻辑和 BOTH 模式的合并。不联网。 */
+class RetrievalServiceTest {
+
+    private static Document doc(String id, double score) {
+        return Document.builder().id(id).text(id).score(score).build();
+    }
+
+    @Test
+    void mergeKeepsHigherScorePerChunkAndTopK() {
+        var original = List.of(doc("a", 0.50), doc("b", 0.48), doc("c", 0.40));
+        var translated = List.of(doc("b", 0.62), doc("d", 0.55), doc("a", 0.45));
+
+        List<Document> merged = RetrievalService.merge(original, translated, 3);
+
+        assertThat(merged).extracting(Document::getId).containsExactly("b", "d", "a");
+        assertThat(merged).extracting(RetrievalService::score).containsExactly(0.62, 0.55, 0.50);
+    }
+
+    @Test
+    void onlyQuestionsWithChineseAreTranslated() {
+        assertThat(QueryTranslator.needsTranslation("荣格说的集体无意识是什么？")).isTrue();
+        assertThat(QueryTranslator.needsTranslation("最近真的很 down")).isTrue();
+        assertThat(QueryTranslator.needsTranslation("What is the collective unconscious?")).isFalse();
+    }
+
+    @Test
+    void cleanTakesFirstLineAndStripsQuotes() {
+        assertThat(QueryTranslator.clean("\"What is libido according to Jung?\"\n\nExplanation: ..."))
+                .isEqualTo("What is libido according to Jung?");
+        assertThat(QueryTranslator.clean("“Electra complex”")).isEqualTo("Electra complex");
+        assertThat(QueryTranslator.clean("  \n")).isEmpty();
+    }
+
+    @Test
+    void validateRejectsAnswersAndRunawayOutput() {
+        QueryTranslator.validate("荣格说的集体无意识是什么？", "What is the collective unconscious according to Jung?");
+        assertThatThrownBy(() -> QueryTranslator.validate("荣格说的集体无意识是什么？", "荣格所说的集体无意识是指……"))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> QueryTranslator.validate("电影推荐？", "x ".repeat(100)))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> QueryTranslator.validate("问题", "")).isInstanceOf(IllegalStateException.class);
+    }
+}
