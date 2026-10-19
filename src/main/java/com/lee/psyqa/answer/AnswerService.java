@@ -127,7 +127,7 @@ public class AnswerService {
                         logged.set(true);
                         if (p.route() != Route.ANSWERED) {
                             logLine(p, question, null, t0, "complete");
-                            conversations.append(conversationId, new Turn(question, p.fixedText()));
+                            conversations.append(conversationId, new Turn(question, p.fixedText(), p.route() == Route.CRISIS));
                             return Flux.concat(head, Flux.just(new StreamEvent("token", json(p.fixedText())), done()));
                         }
                         StringBuilder answer = new StringBuilder();
@@ -158,9 +158,13 @@ public class AnswerService {
                                 // 完成、出错、客户端断开（cancel）都记一行日志
                                 .doFinally(signal -> logLine(p, question, usage.get(), t0,
                                         signal == SignalType.CANCEL ? "cancel" : outcome.get()));
+                        // 最近判过危机：正常回答之后再附上热线（不存进历史，免得下一轮的 prompt 里也带着）
+                        String note = followUpNote(p.crisis());
+                        Flux<StreamEvent> tail = note.isEmpty() ? Flux.empty() : Flux.just(new StreamEvent("token", json(note)));
                         return Flux.concat(head,
                                 Flux.just(new StreamEvent("sources", json(p.sources()))),
                                 tokens,
+                                tail,
                                 Flux.just(done()));
                     })
                     // 检索阶段（embedding / Milvus）失败：仍按 SSE 协议发 error + done，而不是让连接变成 HTTP 500
@@ -178,11 +182,12 @@ public class AnswerService {
     }
 
     private Prepared prepare(String question, String conversationId) {
-        CrisisDetector.Decision crisis = crisisDetector.detect(question);
+        ConversationStore.Snapshot conv = conversations.snapshot(conversationId);
+        // 危机判断要看最近几轮（T7），所以先取历史
+        CrisisDetector.Decision crisis = crisisDetector.detect(question, conv.turns());
         if (crisis.crisis()) {
             return new Prepared(Route.CRISIS, crisisDetector.response(), List.of(), null, List.of(), null, crisis, null, 0);
         }
-        ConversationStore.Snapshot conv = conversations.snapshot(conversationId);
         int summarized = 0;
         ConversationStore.Snapshot afterSummary = maybeSummarize(conversationId, conv);
         if (afterSummary != conv) {
@@ -192,7 +197,7 @@ public class AnswerService {
 
         RetrievalService.Result r = retrieval.retrieve(question, conv.turns());
         if (r.kept().isEmpty()) {
-            return new Prepared(Route.REFUSED, REFUSAL, List.of(), null, List.of(), r, crisis, null, summarized);
+            return new Prepared(Route.REFUSED, REFUSAL + followUpNote(crisis), List.of(), null, List.of(), r, crisis, null, summarized);
         }
 
         ContextBudget.Plan plan = budget.plan(promptBuilder.build(question, List.of()), r.kept(), conv.unsummarized(), conv.summary());
@@ -206,6 +211,10 @@ public class AnswerService {
         }
         return new Prepared(Route.ANSWERED, null, sources, promptBuilder.build(question, plan.chunks()),
                 historyMessages(plan.summary(), plan.turns()), r, crisis, plan, summarized);
+    }
+
+    private String followUpNote(CrisisDetector.Decision crisis) {
+        return crisis.followUp() ? "\n\n---\n" + crisisDetector.followUpNote() : "";
     }
 
     /**
@@ -260,12 +269,14 @@ public class AnswerService {
         String trimmed = c == null || !c.trimmed() ? "-"
                 : "chunks:%d,turns:%d,summary:%s%s".formatted(c.droppedChunks(), c.droppedTurns(), c.summaryDropped() ? "1" : "0",
                 c.overBudget() ? ",over" : "");
-        log.info("route={} outcome={} q_len={} crisis_layer={} crisis_score={} theory_score={} crisis_ms={} "
-                        + "query_mode={} translate_ms={} translate_tokens={} translation=\"{}\" "
+        log.info("route={} outcome={} q_len={} crisis_layer={} crisis_score={} theory_score={} ctx_crisis_score={} ctx_theory_score={} "
+                        + "crisis_follow_up={} crisis_ms={} query_mode={} translate_ms={} translate_tokens={} translation=\"{}\" "
                         + "ctx_budget={} ctx_est={} ctx_fixed={} ctx_chunks={} ctx_turns={} ctx_summary={} ctx_trimmed={} summarized={} "
                         + "topk_scores=[{}] kept={} prompt_tokens={} completion_tokens={} latency_ms={}",
                 p.route(), outcome, question.length(), p.crisis().layer(),
-                "%.2f".formatted(p.crisis().crisisScore()), "%.2f".formatted(p.crisis().theoryScore()), p.crisis().latencyMs(),
+                "%.2f".formatted(p.crisis().crisisScore()), "%.2f".formatted(p.crisis().theoryScore()),
+                "%.2f".formatted(p.crisis().contextCrisisScore()), "%.2f".formatted(p.crisis().contextTheoryScore()),
+                p.crisis().followUp(), p.crisis().latencyMs(),
                 r == null ? "-" : r.mode(),
                 t == null ? 0 : t.latencyMs(), t == null ? 0 : t.promptTokens() + t.completionTokens(), t == null ? "" : t.text(),
                 contextProps.maxPromptTokens(), c == null ? 0 : c.totalTokens(), c == null ? 0 : c.fixedTokens(),

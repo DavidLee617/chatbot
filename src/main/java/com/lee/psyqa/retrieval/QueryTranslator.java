@@ -42,6 +42,11 @@ public class QueryTranslator {
     static final int REWRITE_TURNS = 3;
     /** 历史回答只取开头这么多字：指代通常在回答开头就能解析（"弗洛伊德把焦虑分成两种……"）。 */
     static final int ANSWER_CHARS = 300;
+    /**
+     * 改写结果的长度上限。不按原问题长度算：追问常常只有几个字（"后一种呢？"），展开后理应比它长。
+     * 2026-10-19 旧提示词把上一轮回答整段抄进改写（h04 182 字被拒），新提示词要求 25 词以内，这里留余量。
+     */
+    static final int REWRITE_MAX_CHARS = 300;
 
     private final ChatClient chatClient;
     private final String template;
@@ -69,9 +74,11 @@ public class QueryTranslator {
      */
     public Optional<Translation> translate(String question, List<Turn> history) {
         if (history.isEmpty()) {
-            return needsTranslation(question) ? Optional.of(call(template, question, question)) : Optional.empty();
+            return needsTranslation(question)
+                    ? Optional.of(call(template, question, maxTranslationChars(question)))
+                    : Optional.empty();
         }
-        return Optional.of(call(rewriteTemplate, formatConversation(history, question), question));
+        return Optional.of(call(rewriteTemplate, formatConversation(history, question), REWRITE_MAX_CHARS));
     }
 
     /** 改写 prompt 的 user 消息：最近 REWRITE_TURNS 轮 + 当前消息。 */
@@ -85,7 +92,7 @@ public class QueryTranslator {
         return sb.append("Latest message: ").append(question.strip()).toString();
     }
 
-    private Translation call(String system, String user, String question) {
+    private Translation call(String system, String user, int maxChars) {
         long t0 = System.nanoTime();
         ChatResponse resp = chatClient.prompt()
                 .system(system)
@@ -95,22 +102,26 @@ public class QueryTranslator {
                 .chatResponse();
         String raw = resp == null || resp.getResult() == null ? "" : resp.getResult().getOutput().getText();
         String text = clean(raw);
-        validate(question, text);
+        validate(text, maxChars);
         Usage u = resp.getMetadata().getUsage();
         return new Translation(text, (System.nanoTime() - t0) / 1_000_000,
                 u == null || u.getPromptTokens() == null ? 0 : u.getPromptTokens(),
                 u == null || u.getCompletionTokens() == null ? 0 : u.getCompletionTokens());
     }
 
-    /** 译文必须非空、不含汉字（含汉字说明模型在回答而不是翻译），长度也不能比原问题长出太多。 */
-    static void validate(String question, String text) {
+    static int maxTranslationChars(String question) {
+        return question.length() * 6 + 80;
+    }
+
+    /** 译文必须非空、不含汉字（含汉字说明模型在回答而不是翻译），长度也不能超过 maxChars（单轮翻译按原问题长度算）。 */
+    static void validate(String text, int maxChars) {
         if (text.isEmpty()) {
             throw new IllegalStateException("翻译结果为空");
         }
         if (HAN.matcher(text).find()) {
             throw new IllegalStateException("翻译结果含汉字，模型可能在回答而不是翻译：" + abbreviate(text));
         }
-        if (text.length() > question.length() * 6 + 80) {
+        if (text.length() > maxChars) {
             throw new IllegalStateException("翻译结果过长：" + abbreviate(text));
         }
     }

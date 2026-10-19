@@ -1,6 +1,7 @@
 package com.lee.psyqa.guard;
 
 import com.lee.psyqa.config.PsyQaProperties;
+import com.lee.psyqa.conversation.Turn;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.core.io.ByteArrayResource;
@@ -12,12 +13,16 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-/** 危机识别两层的判定规则。不联网：用假的 embedding（文本含 CRISIS / THEORY / MIXED 决定方向）。 */
+/**
+ * 危机识别的判定规则。不联网：用假的 embedding（文本含 CRISIS / THEORY / MIXED 决定方向）。
+ * {@link #detector} 的 LLM 判定默认不可用（抛异常），走语义层的退回规则；测 LLM 层时用 {@link #detector(EmbeddingModel, CrisisJudge, double)}。
+ */
 public class CrisisDetectorTest {
 
     /**
@@ -25,6 +30,12 @@ public class CrisisDetectorTest {
      * 问题文本里带 CRISIS 就算"像危机"，带 THEORY 就算"像理论"，MIXED 落在两者之间（危机分略高、但低于阈值）。
      */
     public static CrisisDetector detector(EmbeddingModel em, double threshold) {
+        CrisisJudge judge = mock(CrisisJudge.class);
+        when(judge.judge(any())).thenThrow(new RuntimeException("judge unavailable"));
+        return detector(em, judge, threshold);
+    }
+
+    static CrisisDetector detector(EmbeddingModel em, CrisisJudge judge, double threshold) {
         when(em.embed(anyString())).thenAnswer(inv -> fakeVector(inv.getArgument(0)));
         when(em.embed(anyList())).thenAnswer(inv -> ((List<?>) inv.getArgument(0)).stream()
                 .map(o -> fakeVector((String) o)).toList());
@@ -34,7 +45,7 @@ public class CrisisDetectorTest {
                 text("CRISIS_1\nCRISIS_2\n"),
                 text("THEORY_1\n"),
                 threshold, "热线 12356"), null);
-        return new CrisisDetector(em, props);
+        return new CrisisDetector(em, judge, props);
     }
 
     static float[] fakeVector(String t) {
@@ -106,5 +117,47 @@ public class CrisisDetectorTest {
         assertThat(CrisisDetector.decide(false, false, 0.65, 0.50, 0.6)).isTrue();
         assertThat(CrisisDetector.decide(false, false, 0.55, 0.50, 0.6)).isFalse();
         assertThat(CrisisDetector.decide(false, false, 0.70, 0.75, 0.6)).isFalse();
+    }
+
+    @Test
+    void judgeDecidesWhenSemanticLayerLeansCrisis() {
+        CrisisJudge judge = mock(CrisisJudge.class);
+        when(judge.judge(any())).thenReturn(new CrisisJudge.Verdict(false, 5));
+        // 语义层会判危机（CRISIS），LLM 判为安全 → 不是危机
+        var d = detector(mock(EmbeddingModel.class), judge, 0.6).detect("CRISIS 我是不是太内向了才这么累");
+        assertThat(d.crisis()).isFalse();
+        assertThat(d.layer()).isEqualTo(CrisisDetector.Layer.JUDGE_SAFE);
+        assertThat(d.judged()).isTrue();
+    }
+
+    @Test
+    void theoryQuestionSkipsJudge() {
+        CrisisJudge judge = mock(CrisisJudge.class);
+        var d = detector(mock(EmbeddingModel.class), judge, 0.6).detect("THEORY 弗洛伊德怎么解释自杀？");
+        assertThat(d.crisis()).isFalse();
+        assertThat(d.judged()).isFalse();
+        verify(judge, never()).judge(any());
+    }
+
+    @Test
+    void contextWindowCanSendTurnToJudgeWithRecentUserMessages() {
+        CrisisJudge judge = mock(CrisisJudge.class);
+        when(judge.judge(any())).thenReturn(new CrisisJudge.Verdict(true, 5));
+        // 这一句本身像理论（THEORY），但窗口里有 CRISIS → 进 LLM 判定，带最近 2 轮用户原话
+        List<Turn> history = List.of(new Turn("q1", "a1"), new Turn("CRISIS q2", "a2"), new Turn("q3", "a3"));
+        var d = detector(mock(EmbeddingModel.class), judge, 0.6).detect("THEORY 那个呢", history);
+        assertThat(d.crisis()).isTrue();
+        assertThat(d.layer()).isEqualTo(CrisisDetector.Layer.JUDGE);
+        verify(judge).judge(List.of("CRISIS q2", "q3", "THEORY 那个呢"));
+    }
+
+    @Test
+    void followUpAfterRecentCrisisTurn() {
+        EmbeddingModel em = mock(EmbeddingModel.class);
+        CrisisDetector detector = detector(em, 0.6);
+        var recent = List.of(new Turn("我不想活了", "热线", true), new Turn("q", "a"));
+        assertThat(detector.detect("THEORY 荣格的原型", recent).followUp()).isTrue();
+        var old = List.of(new Turn("我不想活了", "热线", true), new Turn("q", "a"), new Turn("q", "a"), new Turn("q", "a"));
+        assertThat(detector.detect("THEORY 荣格的原型", old).followUp()).isFalse();
     }
 }

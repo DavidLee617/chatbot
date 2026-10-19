@@ -96,6 +96,21 @@ class AnswerServiceTest {
     }
 
     @Test
+    void crisisTurnIsMarkedAndNextAnswerKeepsTheHotline() {
+        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
+        StepVerifier.create(service.stream("我不想活了", "c2")).expectNextCount(3).verifyComplete();
+        assertThat(store.history("c2").get(0).crisis()).isTrue();
+
+        // 下一轮是普通问题（这里被拒答）：固定文本后面附上热线，存进历史的这一轮不算危机
+        StepVerifier.create(service.stream("THEORY 荣格的原型是什么", "c2"))
+                .assertNext(e -> assertThat(e.data()).isEqualTo("\"REFUSED\""))
+                .assertNext(e -> assertThat(e.data()).contains("12356"))
+                .assertNext(e -> assertThat(e.name()).isEqualTo("done"))
+                .verifyComplete();
+        assertThat(store.history("c2").get(1).crisis()).isFalse();
+    }
+
+    @Test
     void oldTurnsAreSummarizedInBatchesOnceEnoughAccumulate() {
         when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
         when(summarizer.summarize(anyList())).thenReturn("- 前四轮要点");

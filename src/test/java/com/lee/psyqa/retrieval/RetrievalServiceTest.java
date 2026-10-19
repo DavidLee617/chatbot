@@ -43,12 +43,15 @@ class RetrievalServiceTest {
 
     @Test
     void validateRejectsAnswersAndRunawayOutput() {
-        QueryTranslator.validate("荣格说的集体无意识是什么？", "What is the collective unconscious according to Jung?");
-        assertThatThrownBy(() -> QueryTranslator.validate("荣格说的集体无意识是什么？", "荣格所说的集体无意识是指……"))
+        String q = "荣格说的集体无意识是什么？";
+        QueryTranslator.validate("What is the collective unconscious according to Jung?", QueryTranslator.maxTranslationChars(q));
+        assertThatThrownBy(() -> QueryTranslator.validate("荣格所说的集体无意识是指……", QueryTranslator.maxTranslationChars(q)))
                 .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> QueryTranslator.validate("电影推荐？", "x ".repeat(100)))
+        assertThatThrownBy(() -> QueryTranslator.validate("x ".repeat(100), QueryTranslator.maxTranslationChars("电影推荐？")))
                 .isInstanceOf(IllegalStateException.class);
-        assertThatThrownBy(() -> QueryTranslator.validate("问题", "")).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> QueryTranslator.validate("", 100)).isInstanceOf(IllegalStateException.class);
+        // 改写的上限不按原问题长度：五个字的追问展开成 150 字的独立问题是正常的
+        QueryTranslator.validate("x".repeat(150), QueryTranslator.REWRITE_MAX_CHARS);
     }
 
     @Test
