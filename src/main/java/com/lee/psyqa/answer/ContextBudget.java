@@ -15,6 +15,7 @@ import java.util.List;
  *   <li>规则 + 当前问题：永远保留</li>
  *   <li>前 minChunks 块检索资料：永远保留（只有它们自己就超预算时也保留，并标记 overBudget）</li>
  *   <li>最近的对话原文：从新到旧，放得下就放</li>
+ *   <li>长期记忆（T8，偏好 / 背景 / 相关主题，通常几十 token）</li>
  *   <li>其余检索块：按分数从高到低</li>
  *   <li>更早对话的摘要</li>
  * </ol>
@@ -26,19 +27,20 @@ public final class ContextBudget {
      * @param chunks       放进 prompt 的检索块（保持原顺序，编号 [1]..[n] 按这个顺序）
      * @param turns        放进 prompt 的历史原文（按时间顺序）
      * @param summary      放进 prompt 的摘要；没有或放不下时为 null
+     * @param memory       放进 prompt 的长期记忆；没有或放不下时为 null
      * @param fixedTokens  规则 + 问题
      * @param overBudget   必保留的部分本身就超过上限
      */
-    public record Plan(List<Document> chunks, List<Turn> turns, String summary,
-                       int fixedTokens, int chunkTokens, int turnTokens, int summaryTokens,
-                       int droppedChunks, int droppedTurns, boolean summaryDropped, boolean overBudget) {
+    public record Plan(List<Document> chunks, List<Turn> turns, String summary, String memory,
+                       int fixedTokens, int chunkTokens, int turnTokens, int summaryTokens, int memoryTokens,
+                       int droppedChunks, int droppedTurns, boolean summaryDropped, boolean memoryDropped, boolean overBudget) {
 
         public int totalTokens() {
-            return fixedTokens + chunkTokens + turnTokens + summaryTokens;
+            return fixedTokens + chunkTokens + turnTokens + summaryTokens + memoryTokens;
         }
 
         public boolean trimmed() {
-            return droppedChunks > 0 || droppedTurns > 0 || summaryDropped;
+            return droppedChunks > 0 || droppedTurns > 0 || summaryDropped || memoryDropped;
         }
     }
 
@@ -57,6 +59,11 @@ public final class ContextBudget {
      * @param summary    更早对话的摘要，可为 null
      */
     public Plan plan(String fixedText, List<Document> chunks, List<Turn> turns, String summary) {
+        return plan(fixedText, chunks, turns, summary, null);
+    }
+
+    /** @param memory 长期记忆的文本（MemoryService.Recall#render），可为 null */
+    public Plan plan(String fixedText, List<Document> chunks, List<Turn> turns, String summary, String memory) {
         int fixed = estimate(fixedText);
         int used = fixed;
 
@@ -85,7 +92,22 @@ public final class ContextBudget {
         }
         Collections.reverse(keptTurns);
 
-        // ④ 其余检索块
+        // ④ 长期记忆
+        String keptMemory = null;
+        int memoryTokens = 0;
+        boolean memoryDropped = false;
+        if (memory != null && !memory.isBlank()) {
+            int t = estimate(memory) + 30;   // 加上说明这段是什么的那一句
+            if (used + t <= maxTokens) {
+                keptMemory = memory;
+                memoryTokens = t;
+                used += t;
+            } else {
+                memoryDropped = true;
+            }
+        }
+
+        // ⑤ 其余检索块
         for (int i = must; i < chunks.size(); i++) {
             int t = chunkTokens(chunks.get(i));
             if (used + t <= maxTokens) {
@@ -95,7 +117,7 @@ public final class ContextBudget {
             }
         }
 
-        // ⑤ 摘要
+        // ⑥ 摘要
         String keptSummary = null;
         int summaryTokens = 0;
         boolean summaryDropped = false;
@@ -115,9 +137,9 @@ public final class ContextBudget {
                 keptChunks.add(chunks.get(i));
             }
         }
-        return new Plan(List.copyOf(keptChunks), List.copyOf(keptTurns), keptSummary,
-                fixed, chunkTokens, turnTokens, summaryTokens,
-                chunks.size() - keptChunks.size(), turns.size() - keptTurns.size(), summaryDropped, overBudget);
+        return new Plan(List.copyOf(keptChunks), List.copyOf(keptTurns), keptSummary, keptMemory,
+                fixed, chunkTokens, turnTokens, summaryTokens, memoryTokens,
+                chunks.size() - keptChunks.size(), turns.size() - keptTurns.size(), summaryDropped, memoryDropped, overBudget);
     }
 
     static int chunkTokens(Document d) {

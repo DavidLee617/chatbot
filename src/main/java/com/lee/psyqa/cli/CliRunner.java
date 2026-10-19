@@ -4,6 +4,7 @@ import com.lee.psyqa.answer.AnswerService;
 import com.lee.psyqa.eval.ConversationEval;
 import com.lee.psyqa.eval.CrisisConversationEval;
 import com.lee.psyqa.eval.EvalService;
+import com.lee.psyqa.eval.MemoryEval;
 import com.lee.psyqa.ingest.IngestService;
 import com.lee.psyqa.model.AskResult;
 import com.lee.psyqa.model.SourceRef;
@@ -28,6 +29,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
               java -jar psyqa.jar eval [--file eval/questions.jsonl] [--k 5] [--lang zh|en] [--mode original|translated|both] [--rerank on|off]
               java -jar psyqa.jar eval --conversations [--file eval/conversations.jsonl] [--no-rewrite] [--mode ...]
               java -jar psyqa.jar eval --crisis-conversations [--file eval/crisis-conversations.jsonl]
+              java -jar psyqa.jar eval --memory [--file eval/memory-scenarios.jsonl]
               java -jar psyqa.jar                      # 启动 Web 服务
             """;
 
@@ -36,15 +38,18 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
     private final EvalService evalService;
     private final ConversationEval conversationEval;
     private final CrisisConversationEval crisisConversationEval;
+    private final MemoryEval memoryEval;
     private int exitCode = 0;
 
     public CliRunner(IngestService ingestService, AnswerService answerService, EvalService evalService,
-                     ConversationEval conversationEval, CrisisConversationEval crisisConversationEval) {
+                     ConversationEval conversationEval, CrisisConversationEval crisisConversationEval,
+                     MemoryEval memoryEval) {
         this.ingestService = ingestService;
         this.answerService = answerService;
         this.evalService = evalService;
         this.conversationEval = conversationEval;
         this.crisisConversationEval = crisisConversationEval;
+        this.memoryEval = memoryEval;
     }
 
     @Override
@@ -89,6 +94,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
         boolean english = false;
         boolean conversations = false;
         boolean crisisConversations = false;
+        boolean memory = false;
         boolean rewrite = true;
         Boolean rerank = null;   // null = 用配置里的 psyqa.retrieval.rerank.enabled
         RetrievalService.QueryMode mode = null;   // null = 用配置里的 psyqa.retrieval.query-mode
@@ -100,6 +106,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
                 case "--mode" -> mode = RetrievalService.QueryMode.valueOf(args[++i].toUpperCase());
                 case "--conversations" -> conversations = true;
                 case "--crisis-conversations" -> crisisConversations = true;
+                case "--memory" -> memory = true;
                 case "--no-rewrite" -> rewrite = false;
                 case "--rerank" -> rerank = "on".equalsIgnoreCase(args[++i]);
                 default -> {
@@ -107,6 +114,12 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
                     return;
                 }
             }
+        }
+        if (memory) {
+            MemoryEval.Outcome out = memoryEval.run(file == null ? Path.of("eval/memory-scenarios.jsonl") : file, Path.of("eval/results"));
+            System.out.print(out.summary());
+            System.out.println("完整报告：" + out.markdownFile());
+            return;
         }
         if (crisisConversations) {
             CrisisConversationEval.Outcome out = crisisConversationEval.run(

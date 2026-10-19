@@ -51,6 +51,17 @@
   textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
   button { font: inherit; border: 0; border-radius: 12px; padding: 0 18px; background: var(--accent); color: var(--accent-text); cursor: pointer; }
   button:disabled { opacity: .5; cursor: default; }
+  dialog { width: min(560px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 14px; padding: 16px 18px;
+           background: var(--surface); color: var(--text); }
+  dialog::backdrop { background: rgba(0, 0, 0, .35); }
+  dialog h2 { margin: 0 0 4px; font-size: 17px; }
+  dialog .hint { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
+  .mem { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-top: 1px dashed var(--border); }
+  .mem .kind { flex: none; font-size: 12px; color: var(--muted); width: 3.5em; padding-top: 2px; }
+  .mem .content { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .mem button, dialog .actions button { padding: 4px 10px; font-size: 13px; background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  dialog .actions { display: flex; justify-content: space-between; margin-top: 14px; }
+  dialog .empty { color: var(--muted); padding: 8px 0; }
 </style>
 </head>
 <body>
@@ -60,10 +71,20 @@
       <h1>PsyQA · 心理学经典问答</h1>
       <p>基于荣格、弗洛伊德的公版英文著作回答，并标注出处。仅作理论讨论，不提供心理咨询。可以接着追问。</p>
     </div>
+    <button id="open-memory" type="button">我的记忆</button>
     <button id="new-chat" type="button">新对话</button>
   </header>
   <div id="messages"></div>
 </div>
+<dialog id="memory">
+  <h2>我的记忆</h2>
+  <p class="hint">助手从以往对话里记下的偏好、背景和聊过的主题，用来调整回答。不会记录情绪、健康和人际关系。只保存在这个浏览器对应的匿名 id 下。</p>
+  <div id="memory-list"></div>
+  <div class="actions">
+    <button id="clear-memory" type="button">全部清空</button>
+    <button id="close-memory" type="button">关闭</button>
+  </div>
+</dialog>
 <form id="form">
   <div class="row">
     <textarea id="q" placeholder="例如：荣格说的集体无意识是什么？" maxlength="500" required></textarea>
@@ -81,6 +102,14 @@
   const newId = () => (crypto.randomUUID ? crypto.randomUUID()
       : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2));
   let conversationId = newId();
+
+  // 匿名用户 id（长期记忆用）：第一次访问时生成，存在本浏览器。读写失败（隐私模式等）就只在本页有效
+  let userId;
+  try { userId = localStorage.getItem('psyqa-uid'); } catch (e) { userId = null; }
+  if (!userId) {
+    userId = newId();
+    try { localStorage.setItem('psyqa-uid', userId); } catch (e) { /* 不持久化也能用 */ }
+  }
   document.getElementById('new-chat').addEventListener('click', () => {
     if ($send.disabled) return;   // 回答还没结束时不切换
     conversationId = newId();
@@ -119,7 +148,8 @@
 
     let text = '';
     $send.disabled = true;
-    const es = new EventSource('/api/chat?q=' + encodeURIComponent(question) + '&cid=' + encodeURIComponent(conversationId));
+    const es = new EventSource('/api/chat?q=' + encodeURIComponent(question) + '&cid=' + encodeURIComponent(conversationId)
+        + '&uid=' + encodeURIComponent(userId));
     const finish = () => { es.close(); $send.disabled = false; $q.focus(); };
 
     es.addEventListener('route', e => {
@@ -142,6 +172,48 @@
     });
     es.addEventListener('done', finish);
   }
+
+  const $memory = document.getElementById('memory');
+  const $memoryList = document.getElementById('memory-list');
+  const KIND = { PREFERENCE: '偏好', BACKGROUND: '背景', TOPIC: '聊过' };
+  const memoryUrl = (path = '') => '/api/memory' + path + '?uid=' + encodeURIComponent(userId);
+
+  async function loadMemory() {
+    $memoryList.innerHTML = '';
+    let items = [];
+    try {
+      const r = await fetch(memoryUrl());
+      if (!r.ok) throw new Error(r.status);
+      items = await r.json();
+    } catch (e) {
+      $memoryList.appendChild(el('div', 'empty', '读取失败，请稍后再试。'));
+      return;
+    }
+    if (!items.length) {
+      $memoryList.appendChild(el('div', 'empty', '还没有记忆。'));
+      return;
+    }
+    for (const m of items) {
+      const row = el('div', 'mem');
+      row.appendChild(el('span', 'kind', KIND[m.kind] || m.kind));
+      row.appendChild(el('span', 'content', m.content));
+      const del = el('button', null, '删除');
+      del.type = 'button';
+      del.addEventListener('click', async () => {
+        await fetch(memoryUrl('/' + encodeURIComponent(m.id)), { method: 'DELETE' });
+        loadMemory();
+      });
+      row.appendChild(del);
+      $memoryList.appendChild(row);
+    }
+  }
+  document.getElementById('open-memory').addEventListener('click', () => { $memory.showModal(); loadMemory(); });
+  document.getElementById('close-memory').addEventListener('click', () => $memory.close());
+  document.getElementById('clear-memory').addEventListener('click', async () => {
+    if (!confirm('确定清空全部记忆？')) return;
+    await fetch(memoryUrl(), { method: 'DELETE' });
+    loadMemory();
+  });
 
   $form.addEventListener('submit', e => {
     e.preventDefault();

@@ -37,6 +37,7 @@ class AnswerServiceTest {
     private final ConversationStore store = new ConversationStore();
     private final com.lee.psyqa.conversation.ConversationSummarizer summarizer =
             mock(com.lee.psyqa.conversation.ConversationSummarizer.class);
+    private final com.lee.psyqa.memory.MemoryService memory = mock(com.lee.psyqa.memory.MemoryService.class);
 
     @BeforeEach
     void setUp() throws Exception {
@@ -48,7 +49,7 @@ class AnswerServiceTest {
         service = new AnswerService(CrisisDetectorTest.detector(mock(EmbeddingModel.class), 0.6), retrieval, promptBuilder, builder, new ObjectMapper(),
                 store, summarizer,
                 new com.lee.psyqa.config.PsyQaProperties(null, null, null,
-                        new com.lee.psyqa.config.PsyQaProperties.Context(6000, 2, 4, 4)));
+                        new com.lee.psyqa.config.PsyQaProperties.Context(6000, 2, 4, 4)), memory);
     }
 
     @Test
@@ -125,6 +126,21 @@ class AnswerServiceTest {
         assertThat(snap.summary()).isEqualTo("- 前四轮要点");
         assertThat(snap.summarizedCount()).isEqualTo(4);
         assertThat(snap.turns()).hasSize(9);   // 原文仍保留，只是不再放进 prompt
+    }
+
+    @Test
+    void memoryComesFirstAndCannotChangeRules() {
+        var msgs = AnswerService.historyMessages("- 用户希望回答简短", null, List.of(new com.lee.psyqa.conversation.Turn("q", "a")));
+        assertThat(msgs).hasSize(3);
+        assertThat(msgs.get(0).getText()).contains("用户希望回答简短").contains("不能改变回答规则");
+        assertThat(AnswerService.historyMessages(null, null, List.of())).isEmpty();
+    }
+
+    @Test
+    void refusedTurnDoesNotWriteMemory() {
+        when(retrieval.retrieve(anyString(), anyList())).thenReturn(new RetrievalService.Result(List.of(), List.of(0.2)));
+        StepVerifier.create(service.stream("今天天气怎么样", "c3", "u1")).expectNextCount(3).verifyComplete();
+        verifyNoInteractions(memory);   // 拒答时不召回也不写入
     }
 
     @Test

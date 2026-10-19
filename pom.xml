@@ -47,6 +47,16 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
+        <!-- T8 长期记忆：PostgreSQL + JdbcClient（≈ Dapper，不上 JPA） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
         <!-- macOS 上 netty 的 DNS 原生库，否则启动时报一条 MacOSDnsServerAddressStreamProvider 的 ERROR -->
         <dependency>
             <groupId>io.netty</groupId>

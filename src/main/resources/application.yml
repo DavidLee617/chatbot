@@ -14,6 +14,16 @@ spring:
     reactiveclient:                  # WebClient（流式生成）；读超时按两次数据之间的间隔算
       connect-timeout: 10s
       read-timeout: 60s
+  # T8 长期记忆。本机 Docker（docker/postgres-compose.yml），trust 认证所以没有密码
+  datasource:
+    url: jdbc:postgresql://localhost:5432/psyqa
+    username: psyqa
+    hikari:
+      connection-timeout: 3000         # 数据库不可用时快速失败，记忆只是增强，不能拖住回答
+  sql:
+    init:
+      mode: always                     # 启动时执行 schema.sql（CREATE ... IF NOT EXISTS）
+      continue-on-error: true          # 数据库没起来也照常启动，记忆功能降级（日志里会有错误）
   ai:
     openai:
       api-key: ${DASHSCOPE_API_KEY}

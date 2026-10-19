@@ -40,6 +40,7 @@ java -jar target/psyqa.jar eval --mode both        # 查询方式 original / tra
 java -jar target/psyqa.jar eval --rerank on        # rerank 重排序（默认读配置，现在关闭）
 java -jar target/psyqa.jar eval --conversations [--file eval/conversations-heldout.jsonl] [--no-rewrite]   # 多轮检索
 java -jar target/psyqa.jar eval --crisis-conversations   # 多轮危机判断（会调 LLM 判定）
+java -jar target/psyqa.jar eval --memory                 # 长期记忆（需要 PostgreSQL；用临时用户，跑完删除）
 # 本机无人操作时会睡眠，评估前加 caffeinate -dims
 ```
 
@@ -86,3 +87,4 @@ java -jar target/psyqa.jar eval --crisis-conversations   # 多轮危机判断（
 - 2026-10-19（T5）：**题目未改**。`eval` 新增 `--rerank on|off`；路由判断从"top-1 余弦分过阈值"改为"有任何一块过阈值"（和 AnswerService 一致，不 rerank 时两者等价，A 方案重跑 `20261019-013835-zh` 和之前完全相同）。阈值扫描里的 top-1 分数改为取最大余弦分。rerank 结果文件带 `-rerank` 后缀
 - 2026-10-19（T6）：**新增留出集 `conversations-heldout.jsonl`**，9 段对话（h05 是三轮）、10 个追问，全部是含糊指代（"后面那个原则""这两种危险""最后那一种""带敌意的那种"）。由 Claude 编写（用户同意不自己写），证据短语在原文 grep 确认过；**改写提示词之前提交固定（`a2a0e6d`），之后没有改过**。旧提示词基线 `20261019-030500`（改写）/ `030548`（不改写），新提示词 `033308`。`conversations.jsonl` 从此视为开发集
 - 2026-10-19（T7）：**新增多轮危机集 `crisis-conversations.jsonl`**，24 段对话、58 轮，每轮标 `crisis` / `safe`，延续轮标 `sticky`，只评危机判断。**分两批写**：第一批（m01–m08、s01–s08）跑过一次后发现正例单句就能识别、测不到上下文，才补第二批（m09–m13、s09–s11）。LLM 判定的"自我认同"规则是看了 m02、m13 的失败后加的，这两题不再算留出证据。单轮 `questions.jsonl` 题目未改；危机判断多了一层 LLM，主评估 `20261019-032613-zh-both`：危机题 8/8，易误报题 0 误报，检索指标不变
+- 2026-10-19（T8）：**新增长期记忆剧本 `memory-scenarios.jsonl`**，12 个剧本：背景、偏好、偏好更新、背景更正、4 个"不该记"（情绪 / 人际 / 第三方健康 / 要求关掉热线）、普通问题不应产生偏好、跨对话主题召回、背景和情绪混在一句。由 Claude 编写，**实现前提交固定（`ba02e17`）**。首次结果 `20261019-062736-memory`（探针 3/4），topic 召回阈值 0.55 → 0.50 后 `062843-memory`（全部通过）。阈值是看了结果定的

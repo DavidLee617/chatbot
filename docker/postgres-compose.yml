@@ -1,0 +1,21 @@
+# T8 长期记忆用的 PostgreSQL。只给本机开发用：
+# - 端口只绑 127.0.0.1，外部连不进来
+# - trust 认证（免密码），这样不用再多一个密钥；部署到别处时必须改成密码认证、密码走环境变量
+# 启动：docker compose -f docker/postgres-compose.yml up -d
+# 注：2026-10-19 本机 Docker 代理拉不下镜像，实际用的是 Homebrew 的 postgresql@16（连接信息相同），见 SESSION-1006.md 第 0 节
+services:
+  postgres:
+    image: postgres:16.9
+    container_name: psyqa-postgres
+    environment:
+      POSTGRES_USER: psyqa
+      POSTGRES_DB: psyqa
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - psyqa-pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  psyqa-pgdata:

@@ -8,7 +8,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 上下文预算的优先级：规则 + 问题 > 前 2 块 > 最近对话 > 其余块 > 摘要。 */
+/** 上下文预算的优先级：规则 + 问题 > 前 2 块 > 最近对话 > 长期记忆 > 其余块 > 摘要。 */
 class ContextBudgetTest {
 
     /** 约 n 个 token 的英文文本（4 字符 1 token）。 */
@@ -68,5 +68,22 @@ class ContextBudgetTest {
         assertThat(ContextBudget.estimate("荣格说的集体无意识")).isEqualTo(9);
         assertThat(ContextBudget.estimate("abcdefgh")).isEqualTo(2);
         assertThat(ContextBudget.estimate("什么是 libido？")).isEqualTo(3 + 1 + 2);   // 3 汉字 + 全角问号 + " libido" 7 字符
+    }
+
+    @Test
+    void memoryFitsAfterRecentTurnsBeforeExtraChunks() {
+        // 预算 1000：固定 100 + 必留 2 块各 220 + 1 轮 109 = 649；记忆 40+30 = 70 → 719；第 3 块 220 → 939；摘要 100 放不下
+        var plan = new ContextBudget(1000, 2).plan(tokens(100),
+                List.of(chunk("a", 200), chunk("b", 200), chunk("c", 200)), List.of(turn("q", 100)), tokens(100), tokens(40));
+        assertThat(plan.memory()).isNotNull();
+        assertThat(plan.memoryTokens()).isEqualTo(70);
+        assertThat(plan.chunks()).hasSize(3);
+        assertThat(plan.summary()).isNull();
+
+        // 预算紧时记忆排在第 3 块前面：预算 720 → 记忆放得下（719），第 3 块放不下
+        var tight = new ContextBudget(720, 2).plan(tokens(100),
+                List.of(chunk("a", 200), chunk("b", 200), chunk("c", 200)), List.of(turn("q", 100)), null, tokens(40));
+        assertThat(tight.memory()).isNotNull();
+        assertThat(tight.chunks()).hasSize(2);
     }
 }
