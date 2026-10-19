@@ -24,7 +24,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
             用法：
               java -jar psyqa.jar ingest [--book <file>]
               java -jar psyqa.jar ask "荣格说的集体无意识是什么？"
-              java -jar psyqa.jar eval [--file eval/questions.jsonl] [--k 5] [--lang zh|en] [--mode original|translated|both]
+              java -jar psyqa.jar eval [--file eval/questions.jsonl] [--k 5] [--lang zh|en] [--mode original|translated|both] [--rerank on|off]
               java -jar psyqa.jar eval --conversations [--file eval/conversations.jsonl] [--no-rewrite] [--mode ...]
               java -jar psyqa.jar                      # 启动 Web 服务
             """;
@@ -85,6 +85,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
         boolean english = false;
         boolean conversations = false;
         boolean rewrite = true;
+        Boolean rerank = null;   // null = 用配置里的 psyqa.retrieval.rerank.enabled
         RetrievalService.QueryMode mode = null;   // null = 用配置里的 psyqa.retrieval.query-mode
         for (int i = 1; i < args.length; i++) {
             switch (args[i]) {
@@ -94,6 +95,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
                 case "--mode" -> mode = RetrievalService.QueryMode.valueOf(args[++i].toUpperCase());
                 case "--conversations" -> conversations = true;
                 case "--no-rewrite" -> rewrite = false;
+                case "--rerank" -> rerank = "on".equalsIgnoreCase(args[++i]);
                 default -> {
                     usage();
                     return;
@@ -102,7 +104,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
         }
         if (conversations) {
             ConversationEval.Outcome out = conversationEval.run(file == null ? Path.of("eval/conversations.jsonl") : file,
-                    k, rewrite, mode, Path.of("eval/results"));
+                    k, rewrite, mode, rerank, Path.of("eval/results"));
             System.out.print(out.summary());
             System.out.println("完整报告：" + out.markdownFile());
             return;
@@ -110,7 +112,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
         if (file == null) {
             file = Path.of("eval/questions.jsonl");
         }
-        EvalService.Outcome out = evalService.run(new EvalService.Options(file, k, english, mode, Path.of("eval/results")));
+        EvalService.Outcome out = evalService.run(new EvalService.Options(file, k, english, mode, rerank, Path.of("eval/results")));
         System.out.println();
         System.out.print(out.report().summary());
         System.out.println("完整报告：" + out.markdownFile());

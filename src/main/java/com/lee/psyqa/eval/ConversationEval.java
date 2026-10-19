@@ -49,8 +49,9 @@ public class ConversationEval {
         this.objectMapper = objectMapper;
     }
 
-    public Outcome run(Path file, int k, boolean rewrite, RetrievalService.QueryMode mode, Path outDir) throws IOException {
+    public Outcome run(Path file, int k, boolean rewrite, RetrievalService.QueryMode mode, Boolean rerank, Path outDir) throws IOException {
         RetrievalService.QueryMode m = mode == null ? retrieval.defaultMode() : mode;
+        boolean rr = rerank == null ? retrieval.defaultRerank() : rerank;
         List<Dialogue> dialogues = new ArrayList<>();
         for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
             if (!line.isBlank()) {
@@ -63,7 +64,7 @@ public class ConversationEval {
             List<Turn> history = new ArrayList<>();
             for (int i = 0; i < d.turns().size(); i++) {
                 DialogueTurn t = d.turns().get(i);
-                RetrievalService.Result r = retrieval.retrieve(t.question(), rewrite ? List.copyOf(history) : List.of(), k, m);
+                RetrievalService.Result r = retrieval.retrieve(t.question(), rewrite ? List.copyOf(history) : List.of(), k, m, rr);
                 int firstHit = 0;
                 for (int j = 0; j < r.hits().size(); j++) {
                     if (EvalService.isRelevant(r.hits().get(j), t.expected())) {
@@ -92,7 +93,7 @@ public class ConversationEval {
 
         LocalDateTime now = LocalDateTime.now();
         String stamp = now.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + "-conv-"
-                + (rewrite ? "rewrite" : "norewrite") + "-" + m.name().toLowerCase(Locale.ROOT);
+                + (rewrite ? "rewrite" : "norewrite") + "-" + m.name().toLowerCase(Locale.ROOT) + (rr ? "-rerank" : "");
         Files.createDirectories(outDir);
         Path md = outDir.resolve(stamp + ".md");
         Files.writeString(md, markdown(now, file, k, rewrite, m, summary, results), StandardCharsets.UTF_8);

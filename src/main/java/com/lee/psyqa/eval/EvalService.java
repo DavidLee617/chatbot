@@ -47,8 +47,9 @@ public class EvalService {
     /**
      * @param english true 时用 questionEn 提问（没有英文版的题仍用中文）
      * @param mode    查询方式；null 表示用配置里的默认值
+     * @param rerank  是否 rerank；null 表示用配置里的默认值
      */
-    public record Options(Path questionsFile, int k, boolean english, RetrievalService.QueryMode mode, Path outDir) {}
+    public record Options(Path questionsFile, int k, boolean english, RetrievalService.QueryMode mode, Boolean rerank, Path outDir) {}
 
     public record Outcome(EvalReport report, Path markdownFile) {}
 
@@ -71,12 +72,13 @@ public class EvalService {
         List<EvalQuestion> questions = load(opt.questionsFile());
         double threshold = retrieval.threshold();
         RetrievalService.QueryMode mode = opt.mode() == null ? retrieval.defaultMode() : opt.mode();
+        boolean rerank = opt.rerank() == null ? retrieval.defaultRerank() : opt.rerank();
         LocalDateTime now = LocalDateTime.now();
 
         List<QuestionResult> results = new ArrayList<>();
         for (EvalQuestion q : questions) {
             String text = opt.english() && q.questionEn() != null && !q.questionEn().isBlank() ? q.questionEn() : q.question();
-            results.add(evaluate(q, text, opt.k(), threshold, mode));
+            results.add(evaluate(q, text, opt.k(), threshold, mode, rerank));
             System.out.print("\r评估中 " + results.size() + "/" + questions.size());
         }
         System.out.println();
@@ -85,12 +87,14 @@ public class EvalService {
                 opt.english() ? "en（questionEn）" : "zh", opt.k(), threshold,
                 env.getProperty("spring.ai.openai.embedding.options.model", "?"),
                 props.ingest().chunkSizeChars(), props.ingest().chunkOverlapChars(),
-                opt.questionsFile().toString(), crisisDetector.threshold(), mode.name(), props.retrieval().hnswEf());
+                opt.questionsFile().toString(), crisisDetector.threshold(), mode.name(), props.retrieval().hnswEf(),
+                rerank ? props.retrieval().rerank().model() + "（候选 " + props.retrieval().rerank().candidates() + "）" : "关");
         EvalReport report = new EvalReport(info, results);
 
         Files.createDirectories(opt.outDir());
         String stamp = now.format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss")) + (opt.english() ? "-en" : "-zh")
-                + (mode == RetrievalService.QueryMode.ORIGINAL ? "" : "-" + mode.name().toLowerCase());
+                + (mode == RetrievalService.QueryMode.ORIGINAL ? "" : "-" + mode.name().toLowerCase())
+                + (rerank ? "-rerank" : "");
         Path md = opt.outDir().resolve(stamp + ".md");
         Files.writeString(md, report.markdown(), StandardCharsets.UTF_8);
         // 每题一行 JSON：两次实验可以逐题 diff，看哪些题变好、哪些变差
@@ -102,7 +106,7 @@ public class EvalService {
         return new Outcome(report, md);
     }
 
-    private QuestionResult evaluate(EvalQuestion q, String text, int k, double threshold, RetrievalService.QueryMode mode) {
+    private QuestionResult evaluate(EvalQuestion q, String text, int k, double threshold, RetrievalService.QueryMode mode, boolean rerank) {
         String primaryBook = q.expected() == null || q.expected().isEmpty() ? "" : q.expected().get(0).book();
 
         // 和 AnswerService 一样：判为危机就不检索
@@ -110,17 +114,20 @@ public class EvalService {
         EvalReport.CrisisInfo crisis = new EvalReport.CrisisInfo(c.layer().name(), c.strongHit(), c.weakHit(), c.crisisScore(), c.theoryScore());
         if (c.crisis()) {
             return new QuestionResult(q.id(), q.type(), q.difficulty(), primaryBook, text,
-                    q.expectedRoute(), "CRISIS", 0, false, List.of(), List.of(), crisis, null);
+                    q.expectedRoute(), "CRISIS", 0, false, List.of(), List.of(), crisis, null, null);
         }
 
-        RetrievalService.Result r = retrieval.retrieve(text, k, mode);
+        RetrievalService.Result r = retrieval.retrieve(text, List.of(), k, mode, rerank);
         List<Document> hits = r.hits();
         List<Double> scores = r.topkScores();
         QueryTranslator.Translation t = r.translation();
         EvalReport.TranslationInfo translation = t == null ? null
                 : new EvalReport.TranslationInfo(t.text(), t.latencyMs(), t.promptTokens() + t.completionTokens());
+        EvalReport.RerankCost rerankCost = r.rerank() == null ? null
+                : new EvalReport.RerankCost(r.rerank().latencyMs(), r.rerank().tokens(), r.rerank().failed());
         List<String> retrieved = hits.stream().map(EvalService::describe).toList();
-        String route = !scores.isEmpty() && scores.get(0) >= threshold ? "ANSWERED" : "REFUSED";
+        // 和 AnswerService 一致：有任何一块过阈值就回答（rerank 后第 1 名不一定是余弦分最高的）
+        String route = r.kept().isEmpty() ? "REFUSED" : "ANSWERED";
 
         int firstHit = 0;
         boolean hitInKept = false;
@@ -135,7 +142,7 @@ public class EvalService {
             }
         }
         return new QuestionResult(q.id(), q.type(), q.difficulty(), primaryBook, text,
-                q.expectedRoute(), route, firstHit, hitInKept, scores, retrieved, crisis, translation);
+                q.expectedRoute(), route, firstHit, hitInKept, scores, retrieved, crisis, translation, rerankCost);
     }
 
     /** 块的书名和某条标注一致，且块里出现该条标注的任一证据短语。 */

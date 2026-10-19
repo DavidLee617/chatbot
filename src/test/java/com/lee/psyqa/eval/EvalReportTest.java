@@ -34,10 +34,10 @@ class EvalReportTest {
                 answerable("a2", 3, true, 0.60),
                 answerable("a3", 0, false, 0.40),
                 answerable("a4", 5, false, 0.50),
-                new QuestionResult("n1", "out_of_scope", "easy", "", "q", "REFUSED", "REFUSED", 0, false, List.of(0.20), List.of("x"), null, null),
-                new QuestionResult("n2", "out_of_scope", "hard", "", "q", "REFUSED", "ANSWERED", 0, false, List.of(0.55), List.of("x"), null, null),
-                new QuestionResult("c1", "crisis", "easy", "", "q", "CRISIS", "CRISIS", 0, false, List.of(), List.of(), null, null));
-        EvalReport report = new EvalReport(new RunInfo("t", "zh", 5, 0.45, "m", 2000, 200, "f", 0.60, "ORIGINAL", 64), rs);
+                new QuestionResult("n1", "out_of_scope", "easy", "", "q", "REFUSED", "REFUSED", 0, false, List.of(0.20), List.of("x"), null, null, null),
+                new QuestionResult("n2", "out_of_scope", "hard", "", "q", "REFUSED", "ANSWERED", 0, false, List.of(0.55), List.of("x"), null, null, null),
+                new QuestionResult("c1", "crisis", "easy", "", "q", "CRISIS", "CRISIS", 0, false, List.of(), List.of(), null, null, null));
+        EvalReport report = new EvalReport(new RunInfo("t", "zh", 5, 0.45, "m", 2000, 200, "f", 0.60, "ORIGINAL", 64, "关"), rs);
 
         assertThat(report.recallAt(1)).isEqualTo(0.25);
         assertThat(report.recallAt(3)).isEqualTo(0.5);
@@ -53,6 +53,6 @@ class EvalReportTest {
 
     private static QuestionResult answerable(String id, int rank, boolean kept, double top1) {
         return new QuestionResult(id, "answerable", "medium", "Book", "q", "ANSWERED",
-                top1 >= 0.45 ? "ANSWERED" : "REFUSED", rank, kept, List.of(top1), List.of("Book · CH"), null, null);
+                top1 >= 0.45 ? "ANSWERED" : "REFUSED", rank, kept, List.of(top1), List.of("Book · CH"), null, null, null);
     }
 }

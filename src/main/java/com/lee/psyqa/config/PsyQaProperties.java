@@ -13,8 +13,15 @@ public record PsyQaProperties(Retrieval retrieval, Ingest ingest, Crisis crisis,
     /**
      * @param queryMode ORIGINAL / TRANSLATED / BOTH，见 RetrievalService（T3）
      * @param hnswEf    Milvus HNSW 搜索时的候选数 ef，越大越接近精确检索；不能小于 topK
+     * @param rerank    rerank 重排序（T5）
      */
-    public record Retrieval(int topK, double similarityThreshold, QueryMode queryMode, int hnswEf) {}
+    public record Retrieval(int topK, double similarityThreshold, QueryMode queryMode, int hnswEf, Rerank rerank) {}
+
+    /**
+     * @param enabled    是否在向量检索后做 rerank
+     * @param candidates 粗召回的候选块数，rerank 后再取 topK
+     */
+    public record Rerank(boolean enabled, String model, String url, int candidates) {}
 
     public record Ingest(String booksDir, int chunkSizeChars, int chunkOverlapChars, int embedBatchSize) {}
 

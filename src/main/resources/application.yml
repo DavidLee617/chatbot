@@ -55,6 +55,13 @@ psyqa:
     query-mode: both
     # Milvus HNSW 搜索参数。默认值会漏掉真正最近的块（a14 实测），64 时和暴力计算一致
     hnsw-ef: 64
+    rerank:
+      # T5：粗召回 candidates 块，交给 rerank 模型精排后取 top-k。
+      # 2026-10-19 评估后决定关闭：在 both 模式上 recall@1 96.4% → 78.6%（逐题看是真的排错），每题多约 6900 tokens、2.2 s
+      enabled: false
+      model: qwen3.7-text-rerank   # 2026-10-19 核对：兼容接口唯一的 rerank 模型
+      url: https://dashscope.aliyuncs.com/compatible-api/v1/reranks
+      candidates: 20
   ingest:
     books-dir: data/raw
     chunk-size-chars: 2000

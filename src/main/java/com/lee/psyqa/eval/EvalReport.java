@@ -29,10 +29,12 @@ public final class EvalReport {
      */
     public record QuestionResult(String id, String type, String difficulty, String primaryBook, String question,
                                  String expectedRoute, String predictedRoute, int firstHitRank, boolean hitInKept,
-                                 List<Double> scores, List<String> retrieved, CrisisInfo crisis, TranslationInfo translation) {
+                                 List<Double> scores, List<String> retrieved, CrisisInfo crisis, TranslationInfo translation,
+                                 RerankCost rerank) {
 
+        /** 最高余弦分（rerank 后列表不按余弦排序，所以取最大值；不 rerank 时就是第 1 名）。 */
         double top1() {
-            return scores.isEmpty() ? 0 : scores.get(0);
+            return scores.stream().mapToDouble(Double::doubleValue).max().orElse(0);
         }
 
         boolean answerable() {
@@ -53,13 +55,16 @@ public final class EvalReport {
         }
     }
 
+    /** rerank 的开销。failed 表示调用失败、退回了余弦排序。 */
+    public record RerankCost(long latencyMs, int tokens, boolean failed) {}
+
     /** 查询翻译的结果和开销。tokens = prompt + completion。 */
     public record TranslationInfo(String text, long latencyMs, int tokens) {}
 
     /** 报告头里记录的配置，换参数做对比实验时用来区分两次结果。 */
     public record RunInfo(String startedAt, String lang, int k, double threshold, String embeddingModel,
                           int chunkSize, int chunkOverlap, String questionsFile, double crisisThreshold,
-                          String queryMode, int hnswEf) {}
+                          String queryMode, int hnswEf, String rerank) {}
 
     private static final double[] SWEEP = {0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60};
     private static final double[] CRISIS_SWEEP = {0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70, 0.75};
@@ -126,7 +131,20 @@ public final class EvalReport {
                 crisis.size(), pct(routeAccuracy(crisis)),
                 sensitive.size(), pct(routeAccuracy(sensitive)), info.k(),
                 pct(ratio(sensitive, r -> r.firstHitRank() > 0 && r.firstHitRank() <= info.k())))
-                + "查询翻译：" + translationCost() + "\n";
+                + "查询翻译：" + translationCost() + "\n"
+                + "rerank：" + rerankCost() + "\n";
+    }
+
+    /** rerank 了几道题、平均延迟、总 token、失败几次。 */
+    public String rerankCost() {
+        List<RerankCost> rs = results.stream().map(QuestionResult::rerank).filter(r -> r != null).toList();
+        if (rs.isEmpty()) {
+            return "未开启";
+        }
+        return "%d 道，平均 %.0f ms，共 %d tokens，失败 %d 次".formatted(rs.size(),
+                rs.stream().mapToLong(RerankCost::latencyMs).average().orElse(0),
+                rs.stream().mapToInt(RerankCost::tokens).sum(),
+                rs.stream().filter(RerankCost::failed).count());
     }
 
     /** 翻译了几道题、平均延迟、总 token。 */
@@ -153,6 +171,7 @@ public final class EvalReport {
         sb.append(row("危机语义阈值", "%.2f".formatted(info.crisisThreshold())));
         sb.append(row("查询方式", info.queryMode()));
         sb.append(row("HNSW ef", String.valueOf(info.hnswEf())));
+        sb.append(row("rerank", info.rerank()));
 
         sb.append("\n## 总览\n\n| 指标 | 值 |\n|---|---|\n");
         sb.append(row("有答案的题", String.valueOf(answerable.size())));
@@ -166,6 +185,7 @@ public final class EvalReport {
         sb.append(row("危机题正确路由", pct(routeAccuracy(crisis)) + "（" + crisis.size() + " 道）"));
         sb.append(row("易误报题正确路由（没被判成危机）", pct(routeAccuracy(sensitive)) + "（" + sensitive.size() + " 道）"));
         sb.append(row("查询翻译开销", translationCost()));
+        sb.append(row("rerank 开销", rerankCost()));
 
         sb.append("\n## 按难度\n\n");
         breakdown(sb, QuestionResult::difficulty, List.of("easy", "medium", "hard"));

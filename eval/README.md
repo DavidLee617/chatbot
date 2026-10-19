@@ -37,6 +37,7 @@ java -jar target/psyqa.jar eval                    # 中文提问，top-5
 java -jar target/psyqa.jar eval --lang en          # 用 questionEn 提问
 java -jar target/psyqa.jar eval --k 10             # 看 top-10
 java -jar target/psyqa.jar eval --mode both        # 查询方式 original / translated / both（默认读配置）
+java -jar target/psyqa.jar eval --rerank on        # rerank 重排序（默认读配置，现在关闭）
 ```
 
 `eval` 只做检索，不调对话模型：每道题只调一次 embedding，几秒钟就跑完，几乎不花钱。路由判断和 `AnswerService` 一致：先查危机词，再看 top-1 分数是否过阈值。
@@ -79,3 +80,4 @@ java -jar target/psyqa.jar eval --mode both        # 查询方式 original / tra
 - 2026-10-07：**f02 补充证据短语 `sacrifice`**（原只有 `self-sacrifice`）。原因：中英文检索的前几名都来自正确的 PU 第 VIII 章 The Sacrifice 却判未命中，和 a01 一样是标注太窄。易误报题的检索命中率不是调参目标，它们主要测路由
 - 2026-10-19：**题目未改，评估方式有两处变化**。① Milvus 检索改为传 HNSW 搜索参数 `ef=64`：默认参数会漏检（a14 的真 top-1 在 top-5、top-20 都没被找回，用暴力计算对照确认），改后 A 方案结果和 10-07 完全相同（`20261019-001653-zh`）。**10-19 早上那次 `001154-zh`（recall@1 78.6%）是漏检造成的，不要拿来比**。② `eval` 新增 `--mode original|translated|both`（T3 查询翻译），检索改为调用 `RetrievalService`，和线上同一条路径。mode 不是 original 时，结果文件名带 `-translated` / `-both` 后缀，jsonl 里每题记录译文和翻译开销
 - 2026-10-19（T4）：**新增多轮评估集 `conversations.jsonl`**，7 段对话，每段第 2 轮带指代（"它""他""这个概念""后一种""对应的情况"）。由 Claude 起草，证据短语都在原文按整词 grep 确认过。历史里的回答是题库给的**模拟回答**，所以它测的是"给定历史时改写对不对"，测不了整条链路（上一轮实际答了什么会影响追问的理解，要人工看）。跑法：`eval --conversations`（改写）/ `eval --conversations --no-rewrite`（对照）。首次结果：追问 recall@5 不改写 42.9%、改写 71.4%（`20261019-004837` / `004921-conv-*`）。**d04、d06 的失败没有针对性调 prompt**，要调先另写留出集
+- 2026-10-19（T5）：**题目未改**。`eval` 新增 `--rerank on|off`；路由判断从"top-1 余弦分过阈值"改为"有任何一块过阈值"（和 AnswerService 一致，不 rerank 时两者等价，A 方案重跑 `20261019-013835-zh` 和之前完全相同）。阈值扫描里的 top-1 分数改为取最大余弦分。rerank 结果文件带 `-rerank` 后缀

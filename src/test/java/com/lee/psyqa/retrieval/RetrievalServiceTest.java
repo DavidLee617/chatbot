@@ -50,4 +50,24 @@ class RetrievalServiceTest {
                 .isInstanceOf(IllegalStateException.class);
         assertThatThrownBy(() -> QueryTranslator.validate("问题", "")).isInstanceOf(IllegalStateException.class);
     }
+
+    @Test
+    void rerankFailureFallsBackToCosineOrderTopK() {
+        var store = org.mockito.Mockito.mock(org.springframework.ai.vectorstore.VectorStore.class);
+        var reranker = org.mockito.Mockito.mock(Reranker.class);
+        var candidates = java.util.stream.IntStream.range(0, 20).mapToObj(i -> doc("d" + i, 0.9 - i * 0.01)).toList();
+        org.mockito.Mockito.when(store.similaritySearch(org.mockito.ArgumentMatchers.any(org.springframework.ai.vectorstore.SearchRequest.class)))
+                .thenReturn(candidates);
+        org.mockito.Mockito.when(reranker.rerank(org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyList(),
+                org.mockito.ArgumentMatchers.anyInt())).thenThrow(new RuntimeException("rerank down"));
+        var props = new com.lee.psyqa.config.PsyQaProperties(
+                new com.lee.psyqa.config.PsyQaProperties.Retrieval(5, 0.45, RetrievalService.QueryMode.ORIGINAL, 64,
+                        new com.lee.psyqa.config.PsyQaProperties.Rerank(true, "m", "u", 20)), null, null, null);
+        var service = new RetrievalService(store, org.mockito.Mockito.mock(QueryTranslator.class), reranker, props);
+
+        var r = service.retrieve("What is libido?", List.of(), 5, RetrievalService.QueryMode.ORIGINAL, true);
+
+        assertThat(r.hits()).extracting(Document::getId).containsExactly("d0", "d1", "d2", "d3", "d4");
+        assertThat(r.rerank().failed()).isTrue();
+    }
 }
